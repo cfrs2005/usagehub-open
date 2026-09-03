@@ -3,7 +3,9 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": ".",
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    "declaration": true,
+    "declarationMap": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
