@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://u.80aj.com/schemas/dashboard.schema.json",
+  "title": "Usage dashboard response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["serverTime", "providers"],
+  "properties": {
+    "serverTime": { "type": "string", "format": "date-time" },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "status", "source", "observedAt", "receivedAt", "stale", "windows", "tokenUsage"],
+        "properties": {
+          "provider": { "enum": ["claude", "codex"] },
+          "status": { "enum": ["ok", "missing"] },
+          "source": { "enum": ["official_statusline", "official_app_server"] },
+          "observedAt": { "type": ["string", "null"], "format": "date-time" },
+          "receivedAt": { "type": ["string", "null"], "format": "date-time" },
+          "stale": { "type": "boolean" },
+          "windows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limitId", "kind", "durationMinutes", "usedPercent", "resetsAt"],
+              "properties": {
+                "limitId": { "type": "string" },
+                "kind": { "enum": ["short", "weekly", "other"] },
+                "durationMinutes": { "type": "integer", "minimum": 1 },
+                "usedPercent": { "type": ["number", "null"], "minimum": 0, "maximum": 10000 },
+                "resetsAt": { "type": ["integer", "null"], "minimum": 0 }
+              }
+            }
+          },
+          "tokenUsage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "todayTokens", "totalTokens", "todayCostUsd", "totalCostUsd", "costLabel", "source", "observedAt", "stale"],
+            "properties": {
+              "status": { "enum": ["ok", "missing"] },
+              "todayTokens": { "type": ["integer", "null"], "minimum": 0 },
+              "totalTokens": { "type": ["integer", "null"], "minimum": 0 },
+              "todayCostUsd": { "type": ["number", "null"], "minimum": 0 },
+              "totalCostUsd": { "type": ["number", "null"], "minimum": 0 },
+              "costLabel": { "const": "标准 API 等价费用" },
+              "source": { "enum": ["ccusage", "ccusage_codex", null] },
+              "observedAt": { "type": ["string", "null"], "format": "date-time" },
+              "stale": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

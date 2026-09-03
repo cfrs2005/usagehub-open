@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://u.80aj.com/schemas/claude-ingest.schema.json",
+  "title": "Claude ingest payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["installation_id", "observed_at", "rate_limits"],
+  "properties": {
+    "installation_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$" },
+    "observed_at": { "type": "integer", "minimum": 0 },
+    "claude_version": { "type": "string", "maxLength": 64 },
+    "rate_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "five_hour": { "$ref": "#/$defs/window" },
+        "seven_day": { "$ref": "#/$defs/window" }
+      }
+    }
+  },
+  "$defs": {
+    "window": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["used_percentage", "resets_at"],
+      "properties": {
+        "used_percentage": { "type": ["number", "null"], "minimum": 0, "maximum": 10000 },
+        "resets_at": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

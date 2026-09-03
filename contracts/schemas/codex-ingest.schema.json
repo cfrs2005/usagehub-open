@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://u.80aj.com/schemas/codex-ingest.schema.json",
+  "title": "Codex ingest payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["installation_id", "observed_at", "rate_limits"],
+  "properties": {
+    "installation_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$" },
+    "observed_at": { "type": "integer", "minimum": 0 },
+    "rate_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rateLimitsByLimitId"],
+      "properties": {
+        "rateLimitsByLimitId": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$" },
+          "additionalProperties": { "$ref": "#/$defs/bucket" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "anyOf": [{ "required": ["primary"] }, { "required": ["secondary"] }],
+      "properties": {
+        "primary": { "$ref": "#/$defs/window" },
+        "secondary": { "$ref": "#/$defs/window" }
+      }
+    },
+    "window": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["usedPercent", "windowDurationMins", "resetsAt"],
+      "properties": {
+        "usedPercent": { "type": ["number", "null"], "minimum": 0, "maximum": 10000 },
+        "windowDurationMins": { "type": "integer", "minimum": 1 },
+        "resetsAt": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

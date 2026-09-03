@@ -1,0 +1,19 @@
+{
+  "installation_id": "codex-install-01",
+  "observed_at": 1788374970,
+  "rate_limits": {
+    "rateLimitsByLimitId": {
+      "other": {
+        "primary": { "usedPercent": 42, "windowDurationMins": 60, "resetsAt": 1788377430 },
+        "secondary": null
+      },
+      "codex": {
+        "secondary": { "usedPercent": 48, "windowDurationMins": 10080, "resetsAt": 1788681600 },
+        "primary": { "usedPercent": 25, "windowDurationMins": 15, "resetsAt": 1788375450 }
+      },
+      "future-limit": {
+        "primary": { "usedPercent": null, "windowDurationMins": 120, "resetsAt": null }
+      }
+    }
+  }
+}

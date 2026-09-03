@@ -1,0 +1,9 @@
+{
+  "installation_id": "claude-install-01",
+  "observed_at": 1788374970,
+  "claude_version": "2.0.0",
+  "rate_limits": {
+    "five_hour": { "used_percentage": 63, "resets_at": 1788382800 },
+    "seven_day": { "used_percentage": 48, "resets_at": 1788681600 }
+  }
+}
