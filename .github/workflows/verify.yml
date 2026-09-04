@@ -39,6 +39,21 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - run: ./gradlew testStandardDebugUnitTest lintStandardDebug assembleStandardDebug testKioskDebugUnitTest lintKioskDebug assembleKioskDebug --no-daemon --stacktrace
+      - name: Build signed standard release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/usagehub-release.jks"
+          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/usagehub-release.jks" ./gradlew assembleStandardRelease --no-daemon --stacktrace
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/standard/release/app-standard-release.apk | tee app/build/outputs/apk/standard/release/BADGING.txt
+          grep -F "package: name='com.usagehub.app'" app/build/outputs/apk/standard/release/BADGING.txt
+          ! "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump xmltree app/build/outputs/apk/standard/release/app-standard-release.apk AndroidManifest.xml | grep -F 'android.intent.category.HOME'
       - run: |
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/standard/debug/app-standard-debug.apk | tee app/build/outputs/apk/standard/debug/BADGING.txt
           grep -F "launchable-activity: name='com.usagehub.app.MainActivity'" app/build/outputs/apk/standard/debug/BADGING.txt
@@ -49,6 +64,7 @@ jobs:
           path: |
             android/app/build/outputs/apk/standard/debug/app-standard-debug.apk
             android/app/build/outputs/apk/kiosk/debug/app-kiosk-debug.apk
+            android/app/build/outputs/apk/standard/release/app-standard-release.apk
             android/app/build/reports/
           if-no-files-found: warn
           retention-days: 14

@@ -23,3 +23,5 @@ The checked-in Gradle wrapper requires Java 17.
 ```
 
 The output APKs are under `app/build/outputs/apk/standard/debug/` and `app/build/outputs/apk/kiosk/debug/`.
+
+Main-branch CI also produces `app-standard-release.apk` with the repository's protected signing key. Install that artifact for stable in-place upgrades; Debug artifacts are not an upgrade channel.
