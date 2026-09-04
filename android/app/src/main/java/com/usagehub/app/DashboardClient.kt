@@ -1,5 +1,6 @@
 package com.usagehub.app
 
+import org.json.JSONObject
 import java.io.InputStream
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
@@ -32,16 +33,38 @@ class DashboardClient {
         }.getOrDefault(false)
     }
 
-    private fun request(url: String, authorization: String?): String {
+    fun resolveDisplayToken(baseUrl: String, tokenInput: String, deviceId: String): String {
+        requireSecureUrl(baseUrl)
+        val token = tokenInput.trim()
+        if (token.startsWith("uh_display_") && token.length <= 256) return token
+        require(token.startsWith("uh_enroll_") && token.length <= 256) { "请输入有效的 Display Token 或配对码" }
+        val payload = JSONObject().put("token", token).put("deviceId", deviceId).toString()
+        val raw = request(
+            url = "${baseUrl.trimEnd('/')}/v1/device-enrollments/redeem",
+            authorization = null,
+            method = "POST",
+            body = payload,
+        )
+        val displayToken = JSONObject(raw).optString("token")
+        require(displayToken.startsWith("uh_display_") && displayToken.length <= 256) { "服务器未返回有效的 Display Token" }
+        return displayToken
+    }
+
+    private fun request(url: String, authorization: String?, method: String = "GET", body: String? = null): String {
         val connection = (URL(url).openConnection() as HttpsURLConnection).apply {
-            requestMethod = "GET"
+            requestMethod = method
             connectTimeout = 10_000
             readTimeout = 15_000
             useCaches = false
             setRequestProperty("Accept", "application/json")
             if (authorization != null) setRequestProperty("Authorization", authorization)
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
         }
         try {
+            if (body != null) connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             if (status !in 200..299) {
                 connection.errorStream?.use { it.readLimited(4_096) }

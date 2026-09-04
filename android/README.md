@@ -2,13 +2,13 @@
 
 UsageHub Android is a native Android 11+ dashboard for a user's Claude and Codex usage data. It has no third-party runtime SDK.
 
-The normal app is a regular launcher application. It uses landscape for the wide usage dashboard, but does not register as the device Home app, launch on boot, show over the lock screen, or keep the display awake.
+The normal app is a regular launcher application. It uses landscape for the wide usage dashboard and can remain visible over a non-secure lock screen, but it never registers as the device Home app. Screen-on behavior is an explicit setting.
 
-An optional `kiosk` flavor is available for a dedicated wall display. It adds the Home intent, boot receiver, lock-screen visibility, full-screen mode, and keep-awake behavior. It is never the default build.
+An optional `kiosk` flavor is available for a dedicated wall display. It adds the boot receiver, full-screen mode, and keep-awake behavior, but still never registers as the device Home app. It is never the default build.
 
 ## Pairing and privacy
 
-Create a display token while signed in to `https://u.80aj.com`, then enter it in the app's settings. The token is encrypted by a key held in Android Keystore. The app calls only the dashboard and health endpoints over HTTPS.
+Create a 10-minute pairing code while signed in to `https://u.80aj.com`, then enter it through the visible Settings button. The app exchanges it once for a read-only display token encrypted by Android Keystore. A direct display token is also accepted. The app calls only the pairing, dashboard, and health endpoints over HTTPS.
 
 ## Build
 

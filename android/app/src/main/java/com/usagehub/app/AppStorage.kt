@@ -16,6 +16,8 @@ data class AppConfig(
     val brightnessPercent: Int,
     val refreshMinutes: Int,
     val displayMode: DisplayMode,
+    val showOnLockScreen: Boolean,
+    val keepScreenOn: Boolean,
 )
 
 class AppStorage(context: Context) {
@@ -28,6 +30,8 @@ class AppStorage(context: Context) {
         brightnessPercent = preferences.getInt("brightness_percent", 45).coerceIn(10, 100),
         refreshMinutes = preferences.getInt("refresh_minutes", 2).takeIf { it in setOf(2, 5, 10) } ?: 2,
         displayMode = DisplayMode.USED,
+        showOnLockScreen = preferences.getBoolean("show_on_lock_screen", true),
+        keepScreenOn = preferences.getBoolean("keep_screen_on", false),
     )
 
     fun saveConfig(config: AppConfig) {
@@ -36,6 +40,8 @@ class AppStorage(context: Context) {
             .putInt("brightness_percent", config.brightnessPercent.coerceIn(10, 100))
             .putInt("refresh_minutes", config.refreshMinutes)
             .putString("display_mode", DisplayMode.USED.name)
+            .putBoolean("show_on_lock_screen", config.showOnLockScreen)
+            .putBoolean("keep_screen_on", config.keepScreenOn)
             .apply()
     }
 

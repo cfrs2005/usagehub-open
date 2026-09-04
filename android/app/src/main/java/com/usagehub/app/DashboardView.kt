@@ -6,9 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import java.time.ZoneId
@@ -27,20 +24,13 @@ data class DashboardScreenState(
 
 class DashboardView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val handler = Handler(Looper.getMainLooper())
-    private val settingsRect = RectF(1_374f, 24f, 1_448f, 88f)
+    private val settingsRect = RectF(1_296f, 30f, 1_440f, 82f)
     private var scaleFactor = 1f
     private var offsetX = 0f
     private var offsetY = 0f
     private var pressStartedX = 0f
     private var pressStartedY = 0f
-    private val holdPolicy = SettingsHoldPolicy()
-    private val openSettings = Runnable {
-        if (holdPolicy.onTimer(SystemClock.elapsedRealtime())) {
-            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-            onOpenSettings?.invoke()
-        }
-    }
+    private var settingsPressed = false
 
     var onOpenSettings: (() -> Unit)? = null
 
@@ -58,7 +48,7 @@ class DashboardView(context: Context) : View(context) {
 
     init {
         isFocusable = true
-        contentDescription = "Claude 与 Codex 用量看板。长按右上角设置三秒可修改配置。"
+        contentDescription = "Claude 与 Codex 用量看板。点击右上角设置按钮可修改配置。"
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -88,36 +78,25 @@ class DashboardView(context: Context) : View(context) {
                 if (!settingsRect.contains(baseX, baseY)) return true
                 pressStartedX = event.x
                 pressStartedY = event.y
-                holdPolicy.onDown(SystemClock.elapsedRealtime())
-                handler.postDelayed(openSettings, SETTINGS_HOLD_MILLIS)
+                settingsPressed = true
             }
             MotionEvent.ACTION_MOVE -> {
                 val movement = max(abs(event.x - pressStartedX), abs(event.y - pressStartedY))
-                holdPolicy.onMove(settingsRect.contains(baseX, baseY), movement)
-                if (movement > TOUCH_SLOP || !settingsRect.contains(baseX, baseY)) cancelSettingsHold()
+                if (movement > TOUCH_SLOP || !settingsRect.contains(baseX, baseY)) settingsPressed = false
             }
             MotionEvent.ACTION_UP -> {
-                cancelSettingsHold()
-                performClick()
+                if (settingsPressed && settingsRect.contains(baseX, baseY)) performClick()
+                settingsPressed = false
             }
-            MotionEvent.ACTION_CANCEL -> cancelSettingsHold()
+            MotionEvent.ACTION_CANCEL -> settingsPressed = false
         }
         return true
     }
 
     override fun performClick(): Boolean {
         super.performClick()
+        onOpenSettings?.invoke()
         return true
-    }
-
-    override fun onDetachedFromWindow() {
-        cancelSettingsHold()
-        super.onDetachedFromWindow()
-    }
-
-    private fun cancelSettingsHold() {
-        holdPolicy.cancel()
-        handler.removeCallbacks(openSettings)
     }
 
     private fun drawPaperTexture(canvas: Canvas) {
@@ -140,26 +119,26 @@ class DashboardView(context: Context) : View(context) {
         text(canvas, "AI 用量看板", 52f, 67f, 34f, INK, true)
         val zone = ZoneId.systemDefault()
         val dateTime = "${UsageLogic.dateHeaderText(state.nowMillis, zone)}  ${UsageLogic.clockMinuteText(state.nowMillis, zone)}"
-        text(canvas, dateTime, 1_370f, 52f, 22f, INK, true, condensed = true, align = Paint.Align.RIGHT)
+        text(canvas, dateTime, 1_270f, 52f, 22f, INK, true, condensed = true, align = Paint.Align.RIGHT)
         val updated = state.snapshot?.let {
             val time = UsageLogic.clockMinuteText(it.fetchedAtMillis, ZoneId.systemDefault())
             "数据更新 $time · ${UsageLogic.ageTextChinese(state.nowMillis - it.fetchedAtMillis)}"
         } ?: "等待第一份数据"
-        text(canvas, updated, 1_370f, 80f, 14f, SECONDARY, false, align = Paint.Align.RIGHT)
+        text(canvas, updated, 1_270f, 80f, 14f, SECONDARY, false, align = Paint.Align.RIGHT)
         drawSettingsIcon(canvas)
     }
 
     private fun drawSettingsIcon(canvas: Canvas) {
+        paint.style = Paint.Style.FILL
+        paint.color = if (settingsPressed) INK else Color.rgb(217, 185, 75)
+        canvas.drawRect(settingsRect, paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 3f
         paint.color = INK
-        canvas.drawRect(1_397f, 40f, 1_425f, 68f, paint)
-        canvas.drawRect(1_404f, 47f, 1_418f, 61f, paint)
-        paint.style = Paint.Style.FILL
-        canvas.drawRect(1_407f, 31f, 1_415f, 40f, paint)
-        canvas.drawRect(1_407f, 68f, 1_415f, 77f, paint)
-        canvas.drawRect(1_388f, 50f, 1_397f, 58f, paint)
-        canvas.drawRect(1_425f, 50f, 1_434f, 58f, paint)
+        canvas.drawRect(settingsRect, paint)
+        canvas.drawRect(1_312f, 44f, 1_334f, 66f, paint)
+        canvas.drawRect(1_318f, 50f, 1_328f, 60f, paint)
+        text(canvas, "设置", 1_350f, 65f, 20f, INK, true)
     }
 
     private fun drawIdentity(canvas: Canvas) {
@@ -199,7 +178,7 @@ class DashboardView(context: Context) : View(context) {
         val healthColor = if (state.diagnostics.healthOk) NETWORK_BLUE else ALERT_RED
         text(canvas, health, 48f, 628f, 18f, healthColor, true)
         text(canvas, state.diagnostics.networkLabel, 48f, 660f, 16f, SECONDARY, false)
-        text(canvas, "长按右上角设置", 48f, 684f, 13f, SECONDARY, false)
+        text(canvas, "点击右上角设置", 48f, 684f, 13f, SECONDARY, false)
     }
 
     private fun drawProviderColumn(canvas: Canvas, providerName: String, bounds: RectF, accent: Int) {
@@ -315,7 +294,6 @@ class DashboardView(context: Context) : View(context) {
     companion object {
         private const val BASE_WIDTH = 1_480f
         private const val BASE_HEIGHT = 720f
-        private const val SETTINGS_HOLD_MILLIS = 3_000L
         private const val TOUCH_SLOP = 28f
         private const val SEGMENT_COUNT = 20
         private const val SEGMENT_WIDTH = 14f

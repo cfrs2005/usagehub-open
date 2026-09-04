@@ -2,16 +2,19 @@ package com.usagehub.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.DialogInterface
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.InputType
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.ArrayAdapter
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
@@ -29,7 +32,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     private val fetchInFlight = AtomicBoolean(false)
     private var snapshot: DashboardSnapshot? = null
-    private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED)
+    private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED, true, false)
     private var refreshPolicy = RefreshPolicy()
     private var healthOk = false
     private var statusMessage = "正在启动"
@@ -46,11 +49,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (BuildConfig.KIOSK_MODE) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
         storage = AppStorage(this)
         config = storage.loadConfig()
         snapshot = storage.readCache()
@@ -59,6 +57,7 @@ class MainActivity : Activity() {
             onOpenSettings = { showSettings() }
         }
         setContentView(dashboardView)
+        applyWindowBehavior()
         applyBrightness()
         if (BuildConfig.KIOSK_MODE) enterImmersiveMode()
         render()
@@ -157,6 +156,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun applyWindowBehavior() {
+        setShowWhenLocked(config.showOnLockScreen)
+        setTurnScreenOn(config.showOnLockScreen)
+        if (config.keepScreenOn || BuildConfig.KIOSK_MODE) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
     private fun showSettings() {
         val padding = dp(22)
         val layout = LinearLayout(this).apply {
@@ -170,7 +176,7 @@ class MainActivity : Activity() {
             contentDescription = "用量服务 HTTPS 地址"
         }
         val tokenInput = EditText(this).apply {
-            hint = if (storage.readDisplayToken().isNullOrBlank()) "输入 display token" else "留空则不修改现有 token"
+            hint = if (storage.readDisplayToken().isNullOrBlank()) "输入 Display Token 或 10 分钟配对码" else "留空则不修改现有凭证"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             contentDescription = "UsageHub display token"
         }
@@ -195,6 +201,14 @@ class MainActivity : Activity() {
             )
             setSelection(intervals.indexOf(config.refreshMinutes).coerceAtLeast(0))
         }
+        val showOnLockScreen = CheckBox(this).apply {
+            text = "锁屏时显示用量看板"
+            isChecked = config.showOnLockScreen
+        }
+        val keepScreenOn = CheckBox(this).apply {
+            text = "保持屏幕常亮"
+            isChecked = config.keepScreenOn
+        }
         layout.addView(label("服务地址"))
         layout.addView(serverInput)
         layout.addView(label("Display token · encrypted by Android Keystore"))
@@ -202,10 +216,13 @@ class MainActivity : Activity() {
         layout.addView(brightnessLabel)
         layout.addView(brightness)
         layout.addView(intervalSpinner)
+        layout.addView(showOnLockScreen)
+        layout.addView(keepScreenOn)
 
         val dialog = AlertDialog.Builder(this)
-            .setTitle("UsageHub settings")
+            .setTitle("UsageHub 设置")
             .setView(layout)
+            .setNeutralButton("系统设置") { _, _ -> startActivity(Intent(Settings.ACTION_SETTINGS)) }
             .setNegativeButton("取消", null)
             .setPositiveButton("保存", null)
             .create()
@@ -218,7 +235,7 @@ class MainActivity : Activity() {
                     return@setOnClickListener
                 }
                 if (token.isBlank() && storage.readDisplayToken().isNullOrBlank()) {
-                    tokenInput.error = "必须填写 display token"
+                    tokenInput.error = "必须填写 Display Token 或配对码"
                     return@setOnClickListener
                 }
                 val newConfig = AppConfig(
@@ -226,16 +243,34 @@ class MainActivity : Activity() {
                     brightnessPercent = brightness.progress + 10,
                     refreshMinutes = intervals[intervalSpinner.selectedItemPosition],
                     displayMode = DisplayMode.USED,
+                    showOnLockScreen = showOnLockScreen.isChecked,
+                    keepScreenOn = keepScreenOn.isChecked,
                 )
-                storage.saveConfig(newConfig)
-                if (token.isNotBlank()) storage.writeDisplayToken(token)
-                config = newConfig
-                refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
-                applyBrightness()
-                statusMessage = "设置已保存"
-                dialog.dismiss()
-                render()
-                scheduleRefresh(0L)
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = false
+                tokenInput.isEnabled = false
+                executor.execute {
+                    val resolved = runCatching {
+                        if (token.isBlank()) null else client.resolveDisplayToken(server, token, storage.installationId(this))
+                    }
+                    handler.post {
+                        resolved.onFailure { error ->
+                            tokenInput.error = error.message ?: "凭证验证失败"
+                            tokenInput.isEnabled = true
+                            dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = true
+                        }.onSuccess { displayToken ->
+                            storage.saveConfig(newConfig)
+                            if (displayToken != null) storage.writeDisplayToken(displayToken)
+                            config = newConfig
+                            refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
+                            applyWindowBehavior()
+                            applyBrightness()
+                            statusMessage = "设置已保存"
+                            dialog.dismiss()
+                            render()
+                            scheduleRefresh(0L)
+                        }
+                    }
+                }
             }
         }
         dialog.show()
