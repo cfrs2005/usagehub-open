@@ -19,6 +19,7 @@ data class AppConfig(
     val displayMode: DisplayMode,
     val showOnLockScreen: Boolean,
     val keepScreenOn: Boolean,
+    val immersiveMode: Boolean,
 )
 
 class AppStorage(private val context: Context) {
@@ -33,6 +34,7 @@ class AppStorage(private val context: Context) {
         displayMode = DisplayMode.USED,
         showOnLockScreen = preferences.getBoolean("show_on_lock_screen", true),
         keepScreenOn = preferences.getBoolean("keep_screen_on", false),
+        immersiveMode = preferences.getBoolean("immersive_mode", true),
     )
 
     fun saveConfig(config: AppConfig) {
@@ -43,6 +45,7 @@ class AppStorage(private val context: Context) {
             .putString("display_mode", DisplayMode.USED.name)
             .putBoolean("show_on_lock_screen", config.showOnLockScreen)
             .putBoolean("keep_screen_on", config.keepScreenOn)
+            .putBoolean("immersive_mode", config.immersiveMode)
             .apply()
     }
 

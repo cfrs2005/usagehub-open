@@ -42,7 +42,7 @@ class MainActivity : Activity() {
     private var snapshot: DashboardSnapshot? = null
     private var displayName = "UsageHub"
     private var avatar: Bitmap? = null
-    private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED, true, false)
+    private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED, true, false, true)
     private var refreshPolicy = RefreshPolicy()
     private var healthOk = false
     private var statusMessage = "正在启动"
@@ -78,7 +78,7 @@ class MainActivity : Activity() {
         setContentView(dashboardView)
         applyWindowBehavior()
         applyBrightness()
-        if (BuildConfig.KIOSK_MODE) enterImmersiveMode()
+        applyImmersiveMode()
         render()
     }
 
@@ -118,7 +118,7 @@ class MainActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && BuildConfig.KIOSK_MODE) enterImmersiveMode()
+        if (hasFocus) applyImmersiveMode()
         if (hasFocus) dismissNonSecureKeyguard()
     }
 
@@ -187,6 +187,15 @@ class MainActivity : Activity() {
             hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
             systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+    }
+
+    private fun exitImmersiveMode() {
+        window.setDecorFitsSystemWindows(true)
+        window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+    }
+
+    private fun applyImmersiveMode() {
+        if (BuildConfig.KIOSK_MODE || config.immersiveMode) enterImmersiveMode() else exitImmersiveMode()
     }
 
     private fun applyBrightness() {
@@ -267,6 +276,10 @@ class MainActivity : Activity() {
             text = "保持屏幕常亮"
             isChecked = config.keepScreenOn
         }
+        val immersiveMode = CheckBox(this).apply {
+            text = "全屏显示（隐藏系统导航键）"
+            isChecked = config.immersiveMode
+        }
         layout.addView(label("服务地址"))
         layout.addView(serverInput)
         layout.addView(label("Display token · encrypted by Android Keystore"))
@@ -276,6 +289,7 @@ class MainActivity : Activity() {
         layout.addView(intervalSpinner)
         layout.addView(showOnLockScreen)
         layout.addView(keepScreenOn)
+        layout.addView(immersiveMode)
         val scroll = ScrollView(this).apply { addView(layout) }
 
         val dialog = AlertDialog.Builder(this)
@@ -304,6 +318,7 @@ class MainActivity : Activity() {
                     displayMode = DisplayMode.USED,
                     showOnLockScreen = showOnLockScreen.isChecked,
                     keepScreenOn = keepScreenOn.isChecked,
+                    immersiveMode = immersiveMode.isChecked,
                 )
                 dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = false
                 tokenInput.isEnabled = false
@@ -322,6 +337,7 @@ class MainActivity : Activity() {
                             config = newConfig
                             refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
                             applyWindowBehavior()
+                            applyImmersiveMode()
                             applyBrightness()
                             statusMessage = "设置已保存"
                             dialog.dismiss()

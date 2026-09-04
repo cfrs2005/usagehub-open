@@ -2,7 +2,7 @@
 
 UsageHub Android is a native Android 11+ dashboard for a user's Claude and Codex usage data. It has no third-party runtime SDK.
 
-The normal app is a regular launcher application. It uses landscape for the wide usage dashboard and can remain visible when the device is locked while the dashboard is in front, but it never registers as the device Home app. A non-secure keyguard is dismissed on wake; a PIN, pattern, or password is never bypassed. Screen-on behavior is an explicit setting.
+The normal app is a regular launcher application. It uses landscape for the wide usage dashboard, defaults to immersive full-screen display, and can remain visible when the device is locked while the dashboard is in front, but it never registers as the device Home app. A non-secure keyguard is dismissed on wake; a PIN, pattern, or password is never bypassed. Full-screen and screen-on behavior are explicit settings.
 
 An optional `kiosk` flavor is available for a dedicated wall display. It adds the boot receiver, full-screen mode, and keep-awake behavior, but still never registers as the device Home app. It is never the default build.
 
