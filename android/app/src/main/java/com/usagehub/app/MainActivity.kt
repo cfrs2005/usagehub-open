@@ -19,6 +19,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
+import android.widget.ScrollView
 import android.widget.TextView
 import java.net.URL
 import java.util.concurrent.Executors
@@ -218,10 +219,11 @@ class MainActivity : Activity() {
         layout.addView(intervalSpinner)
         layout.addView(showOnLockScreen)
         layout.addView(keepScreenOn)
+        val scroll = ScrollView(this).apply { addView(layout) }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("UsageHub 设置")
-            .setView(layout)
+            .setView(scroll)
             .setNeutralButton("系统设置") { _, _ -> startActivity(Intent(Settings.ACTION_SETTINGS)) }
             .setNegativeButton("取消", null)
             .setPositiveButton("保存", null)
