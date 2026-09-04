@@ -32,6 +32,13 @@ The server must reject a stale timestamp, reused nonce, body-hash mismatch, inva
 
 The client accepts only a 2xx response as a completed upload. A failed record remains in its local bounded queue for a later retry.
 
+## Platform contract
+
+The exported `@usagehub/contracts` package also defines the five credential kinds
+(`web_session`, `api`, `collector`, `display`, and `enrollment`), their scopes,
+the stable platform routes, and structured API error responses. The private
+UsageHub Cloud implementation is not part of this public repository.
+
 ## Privacy rule
 
 Payloads include a generated installation ID and allowlisted numeric usage snapshots only. They must never contain a prompt, transcript, file path, email address, cookie, access token, or provider credential.

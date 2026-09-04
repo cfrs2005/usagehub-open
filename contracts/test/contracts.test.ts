@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  PLATFORM_ENDPOINTS,
   classifyWindow,
   normalizeClaude,
   normalizeCodex,
@@ -10,6 +11,11 @@ import {
   validateCodexIngest,
   validateTokenUsageIngest,
 } from "../src/index.js";
+
+test("exports the public platform credential and route contract", () => {
+  assert.equal(PLATFORM_ENDPOINTS.ingest.length, 4);
+  assert.ok(PLATFORM_ENDPOINTS.credentials.includes("/v1/collectors"));
+});
 
 function fixture(name: string): unknown {
   return JSON.parse(readFileSync(new URL(`../../fixtures/${name}`, import.meta.url), "utf8"));
