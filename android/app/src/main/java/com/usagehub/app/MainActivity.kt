@@ -2,10 +2,17 @@ package com.usagehub.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.DialogInterface
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -33,11 +40,19 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     private val fetchInFlight = AtomicBoolean(false)
     private var snapshot: DashboardSnapshot? = null
+    private var displayName = "UsageHub"
+    private var avatar: Bitmap? = null
     private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED, true, false)
     private var refreshPolicy = RefreshPolicy()
     private var healthOk = false
     private var statusMessage = "正在启动"
     private var started = false
+    private var screenReceiverRegistered = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_ON) handler.post { dismissNonSecureKeyguard() }
+        }
+    }
 
     private val clockTick = object : Runnable {
         override fun run() {
@@ -53,9 +68,12 @@ class MainActivity : Activity() {
         storage = AppStorage(this)
         config = storage.loadConfig()
         snapshot = storage.readCache()
+        displayName = storage.readDisplayName()
+        avatar = storage.readAvatar()?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
         refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
         dashboardView = DashboardView(this).apply {
             onOpenSettings = { showSettings() }
+            onOpenHome = { openSystemHome() }
         }
         setContentView(dashboardView)
         applyWindowBehavior()
@@ -67,15 +85,29 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         started = true
+        if (!screenReceiverRegistered) {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON), Context.RECEIVER_NOT_EXPORTED)
+            else @Suppress("DEPRECATION") registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+            screenReceiverRegistered = true
+        }
         handler.removeCallbacks(clockTick)
         handler.post(clockTick)
         scheduleRefresh(0L)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        dismissNonSecureKeyguard()
     }
 
     override fun onStop() {
         started = false
         handler.removeCallbacks(clockTick)
         handler.removeCallbacks(scheduledFetch)
+        if (screenReceiverRegistered) {
+            unregisterReceiver(screenReceiver)
+            screenReceiverRegistered = false
+        }
         super.onStop()
     }
 
@@ -87,6 +119,7 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && BuildConfig.KIOSK_MODE) enterImmersiveMode()
+        if (hasFocus) dismissNonSecureKeyguard()
     }
 
     private fun refresh() {
@@ -113,6 +146,9 @@ class MainActivity : Activity() {
                     snapshot = fetched.snapshot
                     healthOk = fetched.healthOk
                     storage.writeCache(fetched.snapshot)
+                    displayName = fetched.displayName
+                    avatar = fetched.avatar?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                    storage.writeDisplayProfile(displayName, fetched.avatar)
                     statusMessage = if (healthOk) "服务正常" else "数据已更新"
                     scheduleRefresh(refreshPolicy.onSuccess())
                 }.onFailure { error ->
@@ -140,6 +176,8 @@ class MainActivity : Activity() {
             diagnostics = DiagnosticsReader.read(this, healthOk),
             statusMessage = statusMessage,
             refreshMinutes = config.refreshMinutes,
+            displayName = displayName,
+            avatar = avatar,
         )
     }
 
@@ -162,6 +200,25 @@ class MainActivity : Activity() {
         setTurnScreenOn(config.showOnLockScreen)
         if (config.keepScreenOn || BuildConfig.KIOSK_MODE) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun dismissNonSecureKeyguard() {
+        if (!config.showOnLockScreen) return
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (keyguard.isKeyguardLocked && !keyguard.isDeviceSecure) keyguard.requestDismissKeyguard(this, null)
+    }
+
+    private fun openSystemHome() {
+        val keyguard = getSystemService(KeyguardManager::class.java)
+        if (keyguard.isKeyguardLocked && !keyguard.isDeviceSecure) {
+            keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { launchSystemHome() }
+            })
+        } else launchSystemHome()
+    }
+
+    private fun launchSystemHome() {
+        startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
     }
 
     private fun showSettings() {
@@ -203,7 +260,7 @@ class MainActivity : Activity() {
             setSelection(intervals.indexOf(config.refreshMinutes).coerceAtLeast(0))
         }
         val showOnLockScreen = CheckBox(this).apply {
-            text = "锁屏时显示用量看板"
+            text = "锁屏前看板在前台时继续显示"
             isChecked = config.showOnLockScreen
         }
         val keepScreenOn = CheckBox(this).apply {

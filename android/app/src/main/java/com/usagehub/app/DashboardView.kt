@@ -1,9 +1,11 @@
 package com.usagehub.app
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.MotionEvent
@@ -20,19 +22,23 @@ data class DashboardScreenState(
     val diagnostics: DeviceDiagnostics,
     val statusMessage: String,
     val refreshMinutes: Int,
+    val displayName: String,
+    val avatar: Bitmap?,
 )
 
 class DashboardView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val homeRect = RectF(1_146f, 30f, 1_286f, 82f)
     private val settingsRect = RectF(1_296f, 30f, 1_440f, 82f)
     private var scaleFactor = 1f
     private var offsetX = 0f
     private var offsetY = 0f
     private var pressStartedX = 0f
     private var pressStartedY = 0f
-    private var settingsPressed = false
+    private var pressedAction = 0
 
     var onOpenSettings: (() -> Unit)? = null
+    var onOpenHome: (() -> Unit)? = null
 
     var state = DashboardScreenState(
         nowMillis = System.currentTimeMillis(),
@@ -40,6 +46,8 @@ class DashboardView(context: Context) : View(context) {
         diagnostics = DeviceDiagnostics(0, 0, 1f, 0, "离线", true, true, false),
         statusMessage = "等待配置",
         refreshMinutes = 2,
+        displayName = "UsageHub",
+        avatar = null,
     )
         set(value) {
             field = value
@@ -48,7 +56,7 @@ class DashboardView(context: Context) : View(context) {
 
     init {
         isFocusable = true
-        contentDescription = "Claude 与 Codex 用量看板。点击右上角设置按钮可修改配置。"
+        contentDescription = "Claude 与 Codex 用量看板。右上角有桌面和设置按钮。"
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -75,27 +83,37 @@ class DashboardView(context: Context) : View(context) {
         val baseY = (event.y - offsetY) / scaleFactor
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (!settingsRect.contains(baseX, baseY)) return true
+                pressedAction = when {
+                    homeRect.contains(baseX, baseY) -> 1
+                    settingsRect.contains(baseX, baseY) -> 2
+                    else -> 0
+                }
+                if (pressedAction == 0) return true
                 pressStartedX = event.x
                 pressStartedY = event.y
-                settingsPressed = true
+                invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
                 val movement = max(abs(event.x - pressStartedX), abs(event.y - pressStartedY))
-                if (movement > TOUCH_SLOP || !settingsRect.contains(baseX, baseY)) settingsPressed = false
+                val inside = (pressedAction == 1 && homeRect.contains(baseX, baseY)) || (pressedAction == 2 && settingsRect.contains(baseX, baseY))
+                if (movement > TOUCH_SLOP || !inside) { pressedAction = 0; invalidate() }
             }
             MotionEvent.ACTION_UP -> {
-                if (settingsPressed && settingsRect.contains(baseX, baseY)) performClick()
-                settingsPressed = false
+                val action = pressedAction
+                pressedAction = 0
+                invalidate()
+                if (action != 0) {
+                    performClick()
+                    if (action == 1) onOpenHome?.invoke() else onOpenSettings?.invoke()
+                }
             }
-            MotionEvent.ACTION_CANCEL -> settingsPressed = false
+            MotionEvent.ACTION_CANCEL -> { pressedAction = 0; invalidate() }
         }
         return true
     }
 
     override fun performClick(): Boolean {
         super.performClick()
-        onOpenSettings?.invoke()
         return true
     }
 
@@ -119,26 +137,25 @@ class DashboardView(context: Context) : View(context) {
         text(canvas, "AI 用量看板", 52f, 67f, 34f, INK, true)
         val zone = ZoneId.systemDefault()
         val dateTime = "${UsageLogic.dateHeaderText(state.nowMillis, zone)}  ${UsageLogic.clockMinuteText(state.nowMillis, zone)}"
-        text(canvas, dateTime, 1_270f, 52f, 22f, INK, true, condensed = true, align = Paint.Align.RIGHT)
+        text(canvas, dateTime, 1_120f, 52f, 22f, INK, true, condensed = true, align = Paint.Align.RIGHT)
         val updated = state.snapshot?.let {
             val time = UsageLogic.clockMinuteText(it.fetchedAtMillis, ZoneId.systemDefault())
             "数据更新 $time · ${UsageLogic.ageTextChinese(state.nowMillis - it.fetchedAtMillis)}"
         } ?: "等待第一份数据"
-        text(canvas, updated, 1_270f, 80f, 14f, SECONDARY, false, align = Paint.Align.RIGHT)
-        drawSettingsIcon(canvas)
+        text(canvas, updated, 1_120f, 80f, 14f, SECONDARY, false, align = Paint.Align.RIGHT)
+        drawHeaderButton(canvas, homeRect, "桌面", pressedAction == 1)
+        drawHeaderButton(canvas, settingsRect, "设置", pressedAction == 2)
     }
 
-    private fun drawSettingsIcon(canvas: Canvas) {
+    private fun drawHeaderButton(canvas: Canvas, bounds: RectF, label: String, pressed: Boolean) {
         paint.style = Paint.Style.FILL
-        paint.color = if (settingsPressed) INK else Color.rgb(217, 185, 75)
-        canvas.drawRect(settingsRect, paint)
+        paint.color = if (pressed) INK else Color.rgb(217, 185, 75)
+        canvas.drawRect(bounds, paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 3f
         paint.color = INK
-        canvas.drawRect(settingsRect, paint)
-        canvas.drawRect(1_312f, 44f, 1_334f, 66f, paint)
-        canvas.drawRect(1_318f, 50f, 1_328f, 60f, paint)
-        text(canvas, "设置", 1_350f, 65f, 20f, INK, true)
+        canvas.drawRect(bounds, paint)
+        text(canvas, label, bounds.centerX(), bounds.centerY() + 8f, 20f, if (pressed) PAPER else INK, true, align = Paint.Align.CENTER)
     }
 
     private fun drawIdentity(canvas: Canvas) {
@@ -148,10 +165,21 @@ class DashboardView(context: Context) : View(context) {
         paint.strokeWidth = 4f
         paint.color = INK
         canvas.drawRect(42f, 130f, 222f, 310f, paint)
-        paint.style = Paint.Style.FILL
-        paint.color = PAPER_FIBER
-        canvas.drawCircle(132f, 220f, 72f, paint)
-        text(canvas, "U", 132f, 242f, 72f, INK, true, align = Paint.Align.CENTER)
+        val avatarBounds = RectF(56f, 144f, 208f, 296f)
+        val avatar = state.avatar
+        if (avatar != null) {
+            canvas.save()
+            val clip = Path().apply { addOval(avatarBounds, Path.Direction.CW) }
+            canvas.clipPath(clip)
+            canvas.drawBitmap(avatar, null, avatarBounds, paint)
+            canvas.restore()
+        } else {
+            paint.style = Paint.Style.FILL
+            paint.color = PAPER_FIBER
+            canvas.drawCircle(132f, 220f, 72f, paint)
+            val initial = state.displayName.trim().firstOrNull()?.uppercase() ?: "U"
+            text(canvas, initial, 132f, 242f, 72f, INK, true, align = Paint.Align.CENTER)
+        }
         paint.color = CLAUDE_BLUE
         canvas.drawRect(42f, 130f, 48f, 310f, paint)
         canvas.drawRect(42f, 130f, 132f, 136f, paint)
@@ -159,7 +187,7 @@ class DashboardView(context: Context) : View(context) {
         canvas.drawRect(216f, 130f, 222f, 310f, paint)
         canvas.drawRect(132f, 304f, 222f, 310f, paint)
 
-        text(canvas, "UsageHub", 48f, 362f, 23f, INK, true)
+        text(canvas, state.displayName.take(16), 48f, 362f, 23f, INK, true)
         text(canvas, "AI 用量", 48f, 398f, 30f, INK, true)
         paint.color = CLAUDE_BLUE
         canvas.drawRect(48f, 430f, 76f, 438f, paint)

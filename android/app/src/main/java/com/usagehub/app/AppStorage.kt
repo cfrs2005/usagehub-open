@@ -5,6 +5,7 @@ import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -20,7 +21,7 @@ data class AppConfig(
     val keepScreenOn: Boolean,
 )
 
-class AppStorage(context: Context) {
+class AppStorage(private val context: Context) {
     private val preferences = context.getSharedPreferences("usagehub", Context.MODE_PRIVATE)
     private val secureKey = SecureKeyStorage(context)
 
@@ -56,6 +57,19 @@ class AppStorage(context: Context) {
 
     fun writeCache(snapshot: DashboardSnapshot) {
         preferences.edit().putString("dashboard_cache", DashboardJson.encode(snapshot)).apply()
+    }
+
+    fun readDisplayName(): String = preferences.getString("display_name", "UsageHub") ?: "UsageHub"
+
+    fun writeDisplayProfile(displayName: String, avatar: ByteArray?) {
+        preferences.edit().putString("display_name", displayName.take(100)).apply()
+        val avatarFile = File(context.filesDir, "profile-avatar.webp")
+        if (avatar == null) avatarFile.delete() else if (avatar.size <= 2 * 1024 * 1024) avatarFile.writeBytes(avatar)
+    }
+
+    fun readAvatar(): ByteArray? {
+        val avatarFile = File(context.filesDir, "profile-avatar.webp")
+        return avatarFile.takeIf { it.isFile && it.length() in 1..(2L * 1024 * 1024) }?.readBytes()
     }
 
     fun installationId(context: Context): String =
