@@ -30,6 +30,8 @@ USAGEHUB_CODEX_USAGE_JSON=/absolute/path/codex-usage.json
 
 The configured JSON files are optional. Without them, the local-history collector calls the relevant `ccusage` command directly. The code never assumes a machine-specific source path.
 
+Claude pricing is refreshed by `ccusage` instead of forcing its bundled offline catalog. Use `ccusage` 20 or newer: the collector requests its per-agent report and imports only the Claude row. If a new Claude model has tokens but no price coverage, the collector rejects the zero-cost result and retains the last valid snapshot.
+
 ## Request security
 
 Each upload sends `Authorization: Bearer <ingest token>` plus `x-timestamp`, `x-nonce`, `x-content-sha256`, and `x-signature`. The signature is HMAC-SHA256 over the exact canonical string documented in [docs/ingest-api.md](../docs/ingest-api.md). The token is both the bearer credential and HMAC key.

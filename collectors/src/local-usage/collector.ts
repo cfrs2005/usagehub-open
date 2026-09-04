@@ -89,6 +89,17 @@ function sourceFor(provider: LocalProvider): LocalUsageSource {
   return provider === "claude" ? "ccusage" : "ccusage_codex";
 }
 
+function requireClaudeCostCoverage(result: LocalUsageResult): LocalUsageResult {
+  if (result.provider !== "claude") return result;
+  if ((result.today_tokens ?? 0) > 0 && (result.today_cost_usd ?? 0) <= 0) {
+    throw new Error("Claude price coverage is missing for today's models");
+  }
+  if ((result.total_tokens ?? 0) > 0 && (result.total_cost_usd ?? 0) <= 0) {
+    throw new Error("Claude price coverage is missing for historical models");
+  }
+  return result;
+}
+
 function projectDashboardFile(
   provider: LocalProvider,
   value: unknown,
@@ -123,10 +134,13 @@ function projectDashboardFile(
 function projectCliOutput(provider: LocalProvider, value: unknown, now: number): LocalUsageResult {
   if (!isRecord(value) || !Array.isArray(value.daily)) throw new Error("ccusage daily output is invalid");
   const today = localDate(now);
-  const todayRow = value.daily.find((candidate) =>
-    isRecord(candidate) && normalizeDate(candidate.date) === today,
-  );
-  const rows = value.daily.filter(isRecord);
+  const rows = value.daily.filter(isRecord).map((row) => {
+    if (provider !== "claude" || !Array.isArray(row.agents)) return row;
+    const claude = row.agents.find((candidate) => isRecord(candidate) && candidate.agent === "claude");
+    if (!isRecord(claude)) return null;
+    return { ...claude, date: row.period ?? row.date };
+  }).filter(isRecord);
+  const todayRow = rows.find((row) => normalizeDate(row.date ?? row.period) === today);
   const tokens = (row: UnknownRecord): number => nonNegativeInteger(row.totalTokens, "totalTokens");
   const cost = (row: UnknownRecord): number => {
     const field = provider === "codex" ? row.costUSD : row.totalCost;
@@ -217,16 +231,16 @@ export class LocalUsageCollector {
       const sourcePath = this.#options.sourceFiles[provider];
       if (!sourcePath) throw new Error("no configured usage JSON source");
       const source = this.#options.sourceReader(sourcePath);
-      const result = projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs);
+      const result = requireClaudeCostCoverage(projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs));
       this.#writeCache(provider, { cachedAt: now, result });
       return result;
     } catch {
       const [command, args] = provider === "claude"
-        ? ["ccusage", ["daily", "--json", "--offline", "--no-color"]]
+        ? ["ccusage", ["daily", "--json", "--no-color", "--by-agent", "--timezone", TIME_ZONE]]
         : ["ccusage-codex", ["daily", "--json", "--offline", "--noColor", "--locale", "en-US", "--timezone", TIME_ZONE]];
       try {
         const stdout = await this.#options.runner(command, args, this.#options.timeoutMs);
-        const result = projectCliOutput(provider, JSON.parse(stdout) as unknown, now);
+        const result = requireClaudeCostCoverage(projectCliOutput(provider, JSON.parse(stdout) as unknown, now));
         this.#writeCache(provider, { cachedAt: now, result });
         return result;
       } catch {

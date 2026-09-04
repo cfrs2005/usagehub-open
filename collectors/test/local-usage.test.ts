@@ -90,3 +90,47 @@ test("missing configured JSON falls back to sanitized CLI data and isolates prov
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+test("Claude refreshes pricing online, isolates the Claude agent, and rejects a zero-priced model", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "usagehub-local-pricing-"));
+  let claudeArgs: string[] = [];
+  let price = 1.5;
+  const collector = new LocalUsageCollector({
+    stateDir,
+    now: () => Date.parse("2026-09-03T18:00:00.000Z"),
+    sourceFiles: { claude: "/tmp/not-present.json" },
+    sourceReader: () => { throw new Error("missing file"); },
+    runner: async (command, args) => {
+      if (command !== "ccusage") throw new Error("unexpected command");
+      claudeArgs = args;
+      return JSON.stringify({
+        daily: [{
+          period: "2026-09-03",
+          totalTokens: 999,
+          totalCost: 999,
+          agents: [
+            { agent: "claude", totalTokens: 42, totalCost: price },
+            { agent: "codex", totalTokens: 957, totalCost: 997.5 },
+          ],
+        }],
+      });
+    },
+  });
+  try {
+    const valid = await collector.collect("claude", true);
+    assert.equal(claudeArgs.includes("--offline"), false);
+    assert.equal(claudeArgs.includes("--by-agent"), true);
+    assert.equal(valid.today_tokens, 42);
+    assert.equal(valid.total_tokens, 42);
+    assert.equal(valid.today_cost_usd, 1.5);
+    assert.equal(valid.total_cost_usd, 1.5);
+
+    price = 0;
+    const rejected = await collector.collect("claude", true);
+    assert.equal(rejected.cached, true);
+    assert.equal(rejected.stale, true);
+    assert.equal(rejected.total_cost_usd, 1.5);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
