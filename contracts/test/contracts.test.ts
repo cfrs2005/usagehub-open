@@ -15,6 +15,7 @@ import {
 test("exports the public platform credential and route contract", () => {
   assert.equal(PLATFORM_ENDPOINTS.ingest.length, 4);
   assert.ok(PLATFORM_ENDPOINTS.credentials.includes("/v1/collectors"));
+  assert.ok(PLATFORM_ENDPOINTS.credentials.includes("/v1/collector-enrollments/redeem"));
 });
 
 function fixture(name: string): unknown {

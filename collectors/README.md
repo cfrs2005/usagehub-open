@@ -1,5 +1,7 @@
 # UsageHub Collectors
 
+This is an AI-agent and maintainer reference. Human users should generate one onboarding prompt from the **AI 接入** page at `https://u.80aj.com`; the agent should complete this setup for them.
+
 These Node 22 collectors upload allowlisted Claude and Codex usage snapshots to UsageHub Cloud or a compatible server.
 
 - Claude: `statusLine` JSON is reduced to official quota fields.
@@ -10,7 +12,15 @@ No prompt, transcript, account email address, file path, cookie, or provider cre
 
 ## Configuration
 
-Set the ingest token in your shell, a user-level service, or a secret manager. Do not commit it.
+The preferred path uses a 10-minute, single-use enrollment code. It stores the resulting long-lived token in an owner-only local file and never prints the token:
+
+```bash
+npm run enroll --workspace @usagehub/collectors -- \
+  --code '<single-use-code>' \
+  --api-url 'https://u.80aj.com'
+```
+
+The default token file is `~/.local/state/usagehub/ingest-token`. The collector loads it automatically. Advanced deployments may instead set the ingest token in a user-level service or secret manager. Do not commit it.
 
 ```bash
 export USAGEHUB_API_URL=https://u.80aj.com
@@ -22,6 +32,7 @@ Optional environment variables:
 ```text
 USAGEHUB_INSTALLATION_ID=optional-stable-installation-id
 USAGEHUB_STATE_DIR=~/.local/state/usagehub
+USAGEHUB_INGEST_TOKEN_FILE=~/.local/state/usagehub/ingest-token
 USAGEHUB_REQUEST_TIMEOUT_MS=5000
 USAGEHUB_QUEUE_MAX_ITEMS=64
 USAGEHUB_CLAUDE_USAGE_JSON=/absolute/path/claude-usage.json

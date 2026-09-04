@@ -1,46 +1,52 @@
 # UsageHub Open
 
-UsageHub Open contains the public clients for the UsageHub service:
+UsageHub puts Claude and Codex quota, token usage, and API-equivalent cost on one dashboard.
 
-- an Android dashboard application;
-- desktop collectors for official Claude and Codex usage snapshots; and
-- strict JSON schemas shared with the private UsageHub Cloud service.
+## Start here
 
-The cloud service, its database, deployment files, and operational data are not part of this repository.
+Most people only need two actions.
 
-## Data boundary
+### 1. Download the Android display
 
-Collectors send only allowlisted usage fields. They never send prompts, transcripts, account email addresses, working directories, cookies, or provider credentials. The Android application stores its display token in Android Keystore-backed storage.
+Download the signed Standard APK from the [latest release](https://github.com/cfrs2005/usagehub-open/releases/latest), install it, then pair it from `https://u.80aj.com`.
 
-## Quick start
+The Standard APK does not register as the system Home launcher. Kiosk mode remains an optional source build for managed devices.
 
-1. Create an account at `https://u.80aj.com`.
-2. Create a collector ingest token in the web application.
-3. Set `USAGEHUB_API_URL` and `USAGEHUB_INGEST_TOKEN` in your shell or process manager.
-4. Run a collector from `collectors/`.
-5. Install the Android APK and pair it using a display token from the web application.
+### 2. Give one prompt to your local AI agent
 
-See [collectors/README.md](collectors/README.md) and [android/README.md](android/README.md) for detailed instructions. The network request contract is in [docs/ingest-api.md](docs/ingest-api.md).
+1. Sign in at `https://u.80aj.com`.
+2. Open **AI 接入**.
+3. Name the computer and select **生成接入提示词**.
+4. Copy the complete prompt to a trusted AI coding agent running on that computer.
 
-## Repository layout
+The prompt contains a single-use enrollment code that expires after 10 minutes. The agent installs, configures, starts, and verifies the collector. A human does not need to understand the collector commands.
 
-```text
-android/     Android client. Standard mode is the default; kiosk mode is optional.
-collectors/  Claude, Codex, and local cost collectors.
-contracts/   JSON schemas and TypeScript validation utilities.
-docs/        Public protocol and contributor documentation.
-```
+## What is public
 
-## Development checks
+- `android/`: Android dashboard application.
+- `collectors/`: Claude, Codex, and local-cost collectors used by AI agents.
+- `contracts/`: strict request schemas and validation utilities.
+- `docs/`: public network and privacy contracts.
+- `AGENTS.md`: the machine-readable onboarding procedure for coding agents.
+
+The SaaS implementation, database, deployment files, OAuth configuration, and operational data are private and are not part of this repository.
+
+## Privacy boundary
+
+Collectors upload only allowlisted numeric usage fields and a generated installation ID. They never upload prompts, transcripts, account email addresses, working directories, cookies, OAuth credentials, or provider access tokens.
+
+Claude quota comes only from the documented Claude Code `statusLine` input. Codex quota comes only from the local read-only app-server method. The project must not reuse provider credentials or call unpublished provider endpoints.
+
+## For maintainers
+
+Humans normally do not need to read the collector manual. AI agents and maintainers can use [collectors/README.md](collectors/README.md), [docs/ingest-api.md](docs/ingest-api.md), and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-npm install
+npm ci
 npm run check
-
-cd android
-./gradlew testStandardDebugUnitTest lintStandardDebug assembleStandardDebug \\
-  testKioskDebugUnitTest lintKioskDebug assembleKioskDebug --no-daemon
 ```
+
+Android checks are documented in [android/README.md](android/README.md).
 
 ## License
 

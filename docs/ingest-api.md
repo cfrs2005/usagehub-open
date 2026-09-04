@@ -30,6 +30,16 @@ The server must reject a stale timestamp, reused nonce, body-hash mismatch, inva
 | `POST` | `/v1/ingest/claude/token-usage` | `token-usage-ingest.schema.json` |
 | `POST` | `/v1/ingest/codex/token-usage` | `token-usage-ingest.schema.json` |
 
+### AI-agent collector enrollment
+
+An authenticated user creates a short-lived enrollment code from the UsageHub **AI 接入** page. A local agent redeems it once:
+
+| Method | Path | Authentication | Payload |
+| --- | --- | --- | --- |
+| `POST` | `/v1/collector-enrollments/redeem` | single-use code in body | `{ "code": "uh_enroll_…", "installationId": "stable-random-id" }` |
+
+The successful response contains a long-lived `uh_ingest_` collector token. The client must store it in an operating-system secret store or an owner-only file without printing it. The enrollment code expires after 10 minutes, can be redeemed only once, and is purpose-bound to collector creation.
+
 The client accepts only a 2xx response as a completed upload. A failed record remains in its local bounded queue for a later retry.
 
 ## Platform contract
