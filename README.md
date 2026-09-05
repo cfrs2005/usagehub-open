@@ -2,6 +2,15 @@
 
 UsageHub puts Claude and Codex quota, token usage, and API-equivalent cost on one dashboard.
 
+<p align="center">
+  <img src="docs/assets/usagehub-real-device.png" width="1100" alt="UsageHub running on a real landscape Android display with Claude and Codex quota, token usage, and API-equivalent cost" />
+</p>
+
+<p align="center">
+  <strong>A glanceable, always-on AI usage dashboard for a real desk.</strong><br />
+  <sub>Claude and Codex quota, reset time, local token history, and API-equivalent cost on Android or the web.</sub>
+</p>
+
 ## Start here
 
 Most people only need two actions.
