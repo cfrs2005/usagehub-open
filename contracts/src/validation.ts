@@ -170,9 +170,10 @@ export function validateTokenUsageIngest(
     "cost_label",
     "source",
     "daily_usage",
+    "model_usage",
   ] as const;
   rejectUnknown(value, fields, "body", errors);
-  for (const field of fields.filter((item) => item !== "daily_usage")) {
+  for (const field of fields.filter((item) => item !== "daily_usage" && item !== "model_usage")) {
     if (!(field in value)) errors.push(`body.${field}: required`);
   }
   if (typeof value.installation_id !== "string" || !INSTALLATION_ID.test(value.installation_id)) {
@@ -200,6 +201,17 @@ export function validateTokenUsageIngest(
       if (!isRecord(item)) { errors.push(`${path}: expected an object`); return; }
       rejectUnknown(item, ["date", "tokens", "costUsd"], path, errors);
       if (typeof item.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) errors.push(`${path}.date: expected YYYY-MM-DD`);
+      if (!Number.isSafeInteger(item.tokens) || (item.tokens as number) < 0) errors.push(`${path}.tokens: expected a non-negative safe integer`);
+      nonNegativeNumber(item.costUsd, `${path}.costUsd`, errors);
+    });
+  }
+  if (value.model_usage !== undefined) {
+    if (!Array.isArray(value.model_usage)) errors.push("body.model_usage: expected an array");
+    else value.model_usage.forEach((item, index) => {
+      const path = `body.model_usage.${index}`;
+      if (!isRecord(item)) { errors.push(`${path}: expected an object`); return; }
+      rejectUnknown(item, ["model", "tokens", "costUsd"], path, errors);
+      if (typeof item.model !== "string" || item.model.length < 1 || item.model.length > 160) errors.push(`${path}.model: expected a non-empty model name`);
       if (!Number.isSafeInteger(item.tokens) || (item.tokens as number) < 0) errors.push(`${path}.tokens: expected a non-negative safe integer`);
       nonNegativeNumber(item.costUsd, `${path}.costUsd`, errors);
     });

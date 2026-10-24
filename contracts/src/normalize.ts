@@ -23,6 +23,8 @@ export function normalizeTokenUsage(
     totalCostUsd: body.total_cost_usd,
     costLabel: body.cost_label,
     source: body.source,
+    ...(body.daily_usage ? { dailyUsage: body.daily_usage.map((item) => ({ date: item.date, tokens: item.tokens, costUsd: item.costUsd })) } : {}),
+    ...(body.model_usage ? { modelUsage: body.model_usage.map((item) => ({ model: item.model, tokens: item.tokens, costUsd: item.costUsd })) } : {}),
   };
 }
 

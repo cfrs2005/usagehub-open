@@ -48,6 +48,7 @@ export interface TokenUsageIngestBody {
   cost_label: TokenCostLabel;
   source: TokenUsageSource;
   daily_usage?: TokenUsageDay[];
+  model_usage?: TokenUsageModel[];
 }
 
 export interface TokenUsageDay {
@@ -55,6 +56,7 @@ export interface TokenUsageDay {
   tokens: number;
   costUsd: number;
 }
+export interface TokenUsageModel { model: string; tokens: number; costUsd: number; }
 
 export interface NormalizedTokenUsage {
   provider: Provider;
@@ -66,6 +68,8 @@ export interface NormalizedTokenUsage {
   totalCostUsd: number;
   costLabel: TokenCostLabel;
   source: TokenUsageSource;
+  dailyUsage?: TokenUsageDay[];
+  modelUsage?: TokenUsageModel[];
 }
 
 export type WindowKind = "short" | "weekly" | "other";

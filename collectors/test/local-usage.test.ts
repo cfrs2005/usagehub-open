@@ -53,6 +53,7 @@ test("reads an explicitly configured usage JSON source and caches by TTL", async
         { date: "2026-09-02", tokens: 120, costUsd: 1.250001 },
         { date: "2026-09-03", tokens: 180, costUsd: 3.25 },
       ],
+      model_usage: [],
     });
     now += 30_000;
     assert.equal((await collector.collect("codex")).cached, true);

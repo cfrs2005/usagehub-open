@@ -25,6 +25,7 @@ export type LocalUsageResult = {
   cached?: true;
   stale?: true;
   daily_usage?: Array<{ date: string; tokens: number; costUsd: number }>;
+  model_usage?: Array<{ model: string; tokens: number; costUsd: number }>;
 };
 
 export type CommandRunner = (command: string, args: string[], timeoutMs: number) => Promise<string>;
@@ -90,6 +91,28 @@ function sourceFor(provider: LocalProvider): LocalUsageSource {
   return provider === "claude" ? "ccusage" : "ccusage_codex";
 }
 
+function modelUsage(rows: UnknownRecord[]): Array<{ model: string; tokens: number; costUsd: number }> {
+  const totals = new Map<string, { tokens: number; costUsd: number }>();
+  for (const row of rows) {
+    const groups = row.modelBreakdowns ?? row.models ?? row.model_breakdowns;
+    const entries = Array.isArray(groups) ? groups : isRecord(groups) ? Object.entries(groups).map(([model, value]) => ({ model, ...(isRecord(value) ? value : {}) })) : [];
+    for (const entry of entries) {
+      if (!isRecord(entry)) continue;
+      const model = typeof (entry.modelName ?? entry.model ?? entry.name) === "string" ? String(entry.modelName ?? entry.model ?? entry.name) : "";
+      if (!model) continue;
+      try {
+        const tokens = entry.totalTokens ?? ((Number(entry.inputTokens) || 0) + (Number(entry.outputTokens) || 0));
+        const cost = entry.costUSD ?? entry.costUsd ?? entry.totalCost ?? 0;
+        const current = totals.get(model) ?? { tokens: 0, costUsd: 0 };
+        current.tokens += nonNegativeInteger(tokens, "model tokens");
+        current.costUsd += nonNegativeMoney(cost, "model cost");
+        totals.set(model, current);
+      } catch { /* Optional model rows must not invalidate provider totals. */ }
+    }
+  }
+  return [...totals.entries()].map(([model, value]) => ({ model, tokens: value.tokens, costUsd: Math.round(value.costUsd * 1_000_000) / 1_000_000 }));
+}
+
 function requireClaudeCostCoverage(result: LocalUsageResult): LocalUsageResult {
   if (result.provider !== "claude") return result;
   if ((result.today_tokens ?? 0) > 0 && (result.today_cost_usd ?? 0) <= 0) {
@@ -127,6 +150,7 @@ function projectDashboardFile(
     total_cost_usd: nonNegativeMoney(value.overview.total_usd, "total cost"),
     cost_label: COST_LABEL,
     daily_usage: value.overview.heatmap.filter(isRecord).map((item) => ({ date: normalizeDate(item.date) ?? "", tokens: nonNegativeInteger(item.value, "daily tokens"), costUsd: nonNegativeMoney(item.total_usd, "daily cost") })).filter((item) => item.date),
+    model_usage: modelUsage([value.overview, ...value.overview.heatmap.filter(isRecord)]),
   };
   if ((result.today_tokens ?? 0) > (result.total_tokens ?? 0)) throw new Error("today tokens exceed total");
   if ((result.today_cost_usd ?? 0) > (result.total_cost_usd ?? 0)) throw new Error("today cost exceeds total");
@@ -161,6 +185,7 @@ function projectCliOutput(provider: LocalProvider, value: unknown, now: number):
     total_cost_usd: Math.round(rows.reduce((sum, row) => sum + cost(row), 0) * 1_000_000) / 1_000_000,
     cost_label: COST_LABEL,
     daily_usage,
+    model_usage: modelUsage(rows),
   };
 }
 
@@ -192,6 +217,7 @@ export function toTokenUsagePayload(result: LocalUsageResult, installationId: st
     cost_label: result.cost_label,
     source: result.source,
     ...(result.daily_usage ? { daily_usage: result.daily_usage } : {}),
+    ...(result.model_usage ? { model_usage: result.model_usage } : {}),
   };
 }
 

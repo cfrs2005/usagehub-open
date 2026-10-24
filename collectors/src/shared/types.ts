@@ -45,6 +45,7 @@ export type TokenUsagePayload = {
   cost_label: "标准 API 等价费用";
   source: "ccusage" | "ccusage_codex";
   daily_usage?: Array<{ date: string; tokens: number; costUsd: number }>;
+  model_usage?: Array<{ model: string; tokens: number; costUsd: number }>;
 };
 
 export type QueueRecord = {
