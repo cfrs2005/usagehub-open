@@ -24,6 +24,7 @@ export type LocalUsageResult = {
   cost_label: typeof COST_LABEL;
   cached?: true;
   stale?: true;
+  daily_usage?: Array<{ date: string; tokens: number; costUsd: number }>;
 };
 
 export type CommandRunner = (command: string, args: string[], timeoutMs: number) => Promise<string>;
@@ -125,6 +126,7 @@ function projectDashboardFile(
     today_cost_usd: todayRow ? nonNegativeMoney(todayRow.total_usd, "today cost") : 0,
     total_cost_usd: nonNegativeMoney(value.overview.total_usd, "total cost"),
     cost_label: COST_LABEL,
+    daily_usage: value.overview.heatmap.filter(isRecord).map((item) => ({ date: normalizeDate(item.date) ?? "", tokens: nonNegativeInteger(item.value, "daily tokens"), costUsd: nonNegativeMoney(item.total_usd, "daily cost") })).filter((item) => item.date),
   };
   if ((result.today_tokens ?? 0) > (result.total_tokens ?? 0)) throw new Error("today tokens exceed total");
   if ((result.today_cost_usd ?? 0) > (result.total_cost_usd ?? 0)) throw new Error("today cost exceeds total");
@@ -146,6 +148,7 @@ function projectCliOutput(provider: LocalProvider, value: unknown, now: number):
     const field = provider === "codex" ? row.costUSD : row.totalCost;
     return nonNegativeMoney(field ?? 0, "cost");
   };
+  const daily_usage = rows.map((row) => ({ date: normalizeDate(row.date ?? row.period), tokens: tokens(row), costUsd: cost(row) })).filter((item): item is { date: string; tokens: number; costUsd: number } => item.date !== null);
   return {
     provider,
     source: sourceFor(provider),
@@ -157,6 +160,7 @@ function projectCliOutput(provider: LocalProvider, value: unknown, now: number):
     today_cost_usd: isRecord(todayRow) ? cost(todayRow) : 0,
     total_cost_usd: Math.round(rows.reduce((sum, row) => sum + cost(row), 0) * 1_000_000) / 1_000_000,
     cost_label: COST_LABEL,
+    daily_usage,
   };
 }
 
@@ -187,6 +191,7 @@ export function toTokenUsagePayload(result: LocalUsageResult, installationId: st
     total_cost_usd: result.total_cost_usd,
     cost_label: result.cost_label,
     source: result.source,
+    ...(result.daily_usage ? { daily_usage: result.daily_usage } : {}),
   };
 }
 

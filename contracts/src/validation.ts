@@ -169,9 +169,10 @@ export function validateTokenUsageIngest(
     "total_cost_usd",
     "cost_label",
     "source",
+    "daily_usage",
   ] as const;
   rejectUnknown(value, fields, "body", errors);
-  for (const field of fields) {
+  for (const field of fields.filter((item) => item !== "daily_usage")) {
     if (!(field in value)) errors.push(`body.${field}: required`);
   }
   if (typeof value.installation_id !== "string" || !INSTALLATION_ID.test(value.installation_id)) {
@@ -191,6 +192,17 @@ export function validateTokenUsageIngest(
   const expectedSource = provider === "claude" ? "ccusage" : "ccusage_codex";
   if (value.source !== expectedSource) {
     errors.push(`body.source: expected ${expectedSource}`);
+  }
+  if (value.daily_usage !== undefined) {
+    if (!Array.isArray(value.daily_usage)) errors.push("body.daily_usage: expected an array");
+    else value.daily_usage.forEach((item, index) => {
+      const path = `body.daily_usage.${index}`;
+      if (!isRecord(item)) { errors.push(`${path}: expected an object`); return; }
+      rejectUnknown(item, ["date", "tokens", "costUsd"], path, errors);
+      if (typeof item.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) errors.push(`${path}.date: expected YYYY-MM-DD`);
+      if (!Number.isSafeInteger(item.tokens) || (item.tokens as number) < 0) errors.push(`${path}.tokens: expected a non-negative safe integer`);
+      nonNegativeNumber(item.costUsd, `${path}.costUsd`, errors);
+    });
   }
   if (
     Number.isSafeInteger(value.today_tokens) &&

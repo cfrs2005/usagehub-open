@@ -49,6 +49,10 @@ test("reads an explicitly configured usage JSON source and caches by TTL", async
       total_cost_usd: 4.500001,
       cost_label: "标准 API 等价费用",
       source: "ccusage_codex",
+      daily_usage: [
+        { date: "2026-09-02", tokens: 120, costUsd: 1.250001 },
+        { date: "2026-09-03", tokens: 180, costUsd: 3.25 },
+      ],
     });
     now += 30_000;
     assert.equal((await collector.collect("codex")).cached, true);

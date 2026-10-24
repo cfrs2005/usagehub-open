@@ -47,6 +47,13 @@ export interface TokenUsageIngestBody {
   total_cost_usd: number;
   cost_label: TokenCostLabel;
   source: TokenUsageSource;
+  daily_usage?: TokenUsageDay[];
+}
+
+export interface TokenUsageDay {
+  date: string;
+  tokens: number;
+  costUsd: number;
 }
 
 export interface NormalizedTokenUsage {
