@@ -49,7 +49,7 @@ async function collect(channel: Channel, deps: ChannelDeps): Promise<Collected> 
     return {
       record: { provider: "claude", kind: "quota", payload },
       observedAtSec: payload.observed_at,
-      summary: `5h ${five_hour?.used_percentage}% / 7d ${seven_day?.used_percentage}%`,
+      summary: `5h ${five_hour ? `${five_hour.used_percentage}%` : "none"} / 7d ${seven_day?.used_percentage}%`,
     };
   }
   if (channel === "codex_quota") {

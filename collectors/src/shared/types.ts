@@ -1,6 +1,7 @@
 export type ClaudeWindow = {
   used_percentage: number;
-  resets_at: number;
+  /** null: the window has no reset time yet (contract-legal, e.g. an idle 5h session). */
+  resets_at: number | null;
 };
 
 export type ClaudePayload = {

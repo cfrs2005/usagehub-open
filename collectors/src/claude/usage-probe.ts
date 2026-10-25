@@ -2,8 +2,8 @@ import { execFile, spawn } from "node:child_process";
 import { accessSync, constants, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import type { ClaudePayload } from "../shared/types.js";
-import { parseClaudeUsageText } from "./usage-text.js";
+import type { ClaudePayload, ClaudeWindow } from "../shared/types.js";
+import { parseClaudeUsage } from "./usage-text.js";
 
 /**
  * Arguments for the official `claude` binary. `/usage` is answered locally by the CLI (0 tokens).
@@ -147,14 +147,11 @@ export async function probeClaudeUsage(options: ClaudeUsageProbeOptions): Promis
   const stdout = await (options.runner ?? runClaudeProcess)(binary, CLAUDE_USAGE_ARGS, cwd, options.timeoutMs ?? CLAUDE_USAGE_TIMEOUT_MS);
   const text = extractResultText(stdout);
   const nowMs = (options.now ?? Date.now)();
-  const parsed = parseClaudeUsageText(text, nowMs);
-  if (!parsed) throw new Error("claude /usage text did not contain parseable session and weekly limits");
-  return {
-    installation_id: options.installationId,
-    observed_at: Math.floor(nowMs / 1_000),
-    rate_limits: {
-      five_hour: { used_percentage: parsed.five_hour.used_percentage, resets_at: parsed.five_hour.resets_at },
-      seven_day: { used_percentage: parsed.seven_day.used_percentage, resets_at: parsed.seven_day.resets_at },
-    },
-  };
+  const parsed = parseClaudeUsage(text, nowMs);
+  if (!parsed.ok) throw new Error(`claude /usage text did not contain parseable session and weekly limits (${parsed.reason})`);
+  const window = (w: ClaudeWindow): ClaudeWindow => ({ used_percentage: w.used_percentage, resets_at: w.resets_at });
+  const rate_limits: ClaudePayload["rate_limits"] = {};
+  if (parsed.value.five_hour) rate_limits.five_hour = window(parsed.value.five_hour);
+  rate_limits.seven_day = window(parsed.value.seven_day);
+  return { installation_id: options.installationId, observed_at: Math.floor(nowMs / 1_000), rate_limits };
 }

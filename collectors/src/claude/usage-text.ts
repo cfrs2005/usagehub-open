@@ -4,10 +4,17 @@ import { isValidTimeZone, zonedParts, zonedWallTimeToEpochMs } from "../shared/z
 export const FIVE_HOUR_MINUTES = 300;
 export const SEVEN_DAY_MINUTES = 10_080;
 
+/**
+ * A missing `five_hour` means the CLI printed no session line: Claude Code skips a limit whose
+ * utilization is null (no 5h window open). `resets_at: null` means the line had no "resets" part:
+ * Claude Code omits it when the server reports no reset time (window idle). Both are contract-legal.
+ */
 export type ParsedClaudeUsage = {
-  five_hour: ClaudeWindow & { durationMinutes: typeof FIVE_HOUR_MINUTES };
+  five_hour?: ClaudeWindow & { durationMinutes: typeof FIVE_HOUR_MINUTES };
   seven_day: ClaudeWindow & { durationMinutes: typeof SEVEN_DAY_MINUTES };
 };
+
+export type ClaudeUsageParse = { ok: true; value: ParsedClaudeUsage } | { ok: false; reason: string };
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 /** A reset may be reported at most this far in the past (display rounding / clock skew). */
@@ -78,36 +85,52 @@ export function parseResetText(text: string, nowMs: number, windowMinutes: numbe
   return valid.length > 0 ? Math.floor(valid[0] / 1_000) : null;
 }
 
-function findLine(text: string, label: RegExp): { percent: number; reset: string } | null {
+type UsageLine = { percent: number; reset: string | null };
+
+/**
+ * Mirrors Claude Code's text renderer: `${title}: ${floor(util)}% used` plus ` · resets ${when}` only
+ * when a reset time exists. Returns undefined when the line is absent, null when present but malformed.
+ */
+function findLine(text: string, label: RegExp): UsageLine | null | undefined {
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     const head = label.exec(line);
     if (!head) continue;
     const rest = line.slice(head[0].length);
-    const match = /^\s*:\s*(\d{1,3}(?:\.\d+)?)\s*%\s*used\b.*?\bresets?\s+(.+)$/i.exec(rest);
+    const match = /^\s*:\s*(\d{1,3}(?:\.\d+)?)\s*%\s*used\b(?:.*?\bresets?\s+(.+))?\s*$/i.exec(rest);
     if (!match) return null;
     const percent = Number(match[1]);
     if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
-    return { percent, reset: match[2] };
+    return { percent, reset: match[2] ?? null };
   }
-  return null;
+  return undefined;
+}
+
+function toWindow<D extends number>(line: UsageLine, nowMs: number, durationMinutes: D): (ClaudeWindow & { durationMinutes: D }) | null {
+  const resets_at = line.reset === null ? null : parseResetText(line.reset, nowMs, durationMinutes);
+  if (line.reset !== null && resets_at === null) return null;
+  return { used_percentage: line.percent, resets_at, durationMinutes };
 }
 
 /**
- * Strictly parses the text body of `claude -p "/usage"`. Both the session (5h) and the all-model weekly
- * (7d) lines must be present and fully parseable, otherwise null. Per-model weekly lines are ignored
- * because the ingest contract has no field for them.
+ * Strictly parses the text body of `claude -p "/usage"`. The all-model weekly (7d) line is required;
+ * the session (5h) line may be absent (no open window). Any line that is present must be fully
+ * parseable. Per-model weekly lines are ignored because the ingest contract has no field for them.
  */
-export function parseClaudeUsageText(text: string, nowMs: number): ParsedClaudeUsage | null {
-  if (typeof text !== "string" || text.length === 0 || text.length > 65_536) return null;
+export function parseClaudeUsage(text: string, nowMs: number): ClaudeUsageParse {
+  if (typeof text !== "string" || text.length === 0 || text.length > 65_536) return { ok: false, reason: "empty or oversized text" };
   const session = findLine(text, /^current session\b/i);
   const week = findLine(text, /^current week\s*\(\s*all models\s*\)/i);
-  if (!session || !week) return null;
-  const sessionReset = parseResetText(session.reset, nowMs, FIVE_HOUR_MINUTES);
-  const weekReset = parseResetText(week.reset, nowMs, SEVEN_DAY_MINUTES);
-  if (sessionReset === null || weekReset === null) return null;
-  return {
-    five_hour: { used_percentage: session.percent, resets_at: sessionReset, durationMinutes: FIVE_HOUR_MINUTES },
-    seven_day: { used_percentage: week.percent, resets_at: weekReset, durationMinutes: SEVEN_DAY_MINUTES },
-  };
+  if (week === undefined) return { ok: false, reason: "weekly (all models) line missing" };
+  const seven_day = week && toWindow(week, nowMs, SEVEN_DAY_MINUTES);
+  if (!seven_day) return { ok: false, reason: "weekly (all models) line unparseable" };
+  if (session === undefined) return { ok: true, value: { seven_day } };
+  const five_hour = session && toWindow(session, nowMs, FIVE_HOUR_MINUTES);
+  if (!five_hour) return { ok: false, reason: "session line unparseable" };
+  return { ok: true, value: { five_hour, seven_day } };
+}
+
+export function parseClaudeUsageText(text: string, nowMs: number): ParsedClaudeUsage | null {
+  const parsed = parseClaudeUsage(text, nowMs);
+  return parsed.ok ? parsed.value : null;
 }

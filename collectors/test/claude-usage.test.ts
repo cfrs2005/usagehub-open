@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { CLAUDE_USAGE_ARGS, extractResultText, probeClaudeUsage } from "../src/claude/usage-probe.js";
-import { parseClaudeUsageText, parseResetText } from "../src/claude/usage-text.js";
+import { parseClaudeUsage, parseClaudeUsageText, parseResetText } from "../src/claude/usage-text.js";
 
 const LA = "America/Los_Angeles";
 // Real `claude -p "/usage"` result text (header lines only), observed 2026-10-24 ~21:00 PDT.
@@ -31,8 +31,8 @@ test("tolerates case, spacing and whole-hour resets", () => {
   const text = "current session : 7.5 % used - Resets Oct 24 at 11 PM (America/Los_Angeles)\nCurrent Week (All Models): 100% used · resets October 26 at 10pm (America/Los_Angeles)";
   const parsed = parseClaudeUsageText(text, NOW);
   assert.ok(parsed);
-  assert.equal(parsed.five_hour.used_percentage, 7.5);
-  assert.equal(parsed.five_hour.resets_at, sec("2026-10-25T06:00:00Z"));
+  assert.equal(parsed.five_hour?.used_percentage, 7.5);
+  assert.equal(parsed.five_hour?.resets_at, sec("2026-10-25T06:00:00Z"));
   assert.equal(parsed.seven_day.resets_at, sec("2026-10-27T05:00:00Z"));
 });
 
@@ -40,12 +40,40 @@ test("rejects changed wording, missing items and per-model-only output", () => {
   assert.equal(parseClaudeUsageText(SAMPLE.replace("Current session: 65% used", "Current session — 65% used"), NOW), null);
   assert.equal(parseClaudeUsageText(SAMPLE.replace("% used", "% consumed"), NOW), null);
   assert.equal(parseClaudeUsageText(SAMPLE.replace(/^Current week \(all models\).*$/m, ""), NOW), null);
-  assert.equal(parseClaudeUsageText(SAMPLE.replace(/^Current session.*$/m, ""), NOW), null);
+  assert.equal(parseClaudeUsageText(SAMPLE.replace("Current session: 65% used", "Current session: used"), NOW), null);
+  assert.equal(parseClaudeUsageText(SAMPLE.replace("65% used · resets Oct 24 at 11:09pm (America/Los_Angeles)", "65% used · paused"), NOW), null, "unknown trailer");
+  assert.equal(parseClaudeUsageText(SAMPLE.replace("50% used · resets Oct 26 at 9:59pm", "50% used · resets soon"), NOW), null, "bad weekly reset");
   assert.equal(parseClaudeUsageText(SAMPLE.replace(" (America/Los_Angeles)", ""), NOW), null, "missing zone");
   assert.equal(parseClaudeUsageText(SAMPLE.replace("Oct 24 at 11:09pm (America", "Oct 24 at 11:09pm (Mars"), NOW), null, "unknown zone");
   assert.equal(parseClaudeUsageText(SAMPLE.replace("65% used", "165% used"), NOW), null);
   assert.equal(parseClaudeUsageText(SAMPLE.replace("resets Oct 24 at 11:09pm", "resets in 2 hours"), NOW), null);
   assert.equal(parseClaudeUsageText("", NOW), null);
+});
+
+// Synthetic idle shapes, derived from Claude Code 2.1.309's text renderer: the " · resets …" suffix is
+// omitted when resets_at is null, and the whole line is skipped when the limit/utilization is null.
+const IDLE_NO_RESET = SAMPLE.replace("Current session: 65% used · resets Oct 24 at 11:09pm (America/Los_Angeles)", "Current session: 0% used");
+const IDLE_NO_LINE = SAMPLE.replace(/^Current session.*\n/m, "");
+
+test("idle 5h window: no reset time reports the percentage with resets_at null, weekly unchanged", () => {
+  const parsed = parseClaudeUsageText(IDLE_NO_RESET, NOW);
+  assert.ok(parsed);
+  assert.deepEqual(parsed.five_hour, { used_percentage: 0, resets_at: null, durationMinutes: 300 });
+  assert.deepEqual(parsed.seven_day, { used_percentage: 50, resets_at: sec("2026-10-27T04:59:00Z"), durationMinutes: 10080 });
+});
+
+test("no 5h window: an absent session line omits five_hour instead of inventing 0%", () => {
+  const parsed = parseClaudeUsageText(IDLE_NO_LINE, NOW);
+  assert.ok(parsed);
+  assert.equal(parsed.five_hour, undefined);
+  assert.equal(parsed.seven_day.used_percentage, 50);
+});
+
+test("unparseable output still fails with a reason", () => {
+  assert.deepEqual(parseClaudeUsage(SAMPLE.replace(/^Current week \(all models\).*$/m, ""), NOW), { ok: false, reason: "weekly (all models) line missing" });
+  assert.deepEqual(parseClaudeUsage(SAMPLE.replace("50% used", "50% consumed"), NOW), { ok: false, reason: "weekly (all models) line unparseable" });
+  assert.deepEqual(parseClaudeUsage(SAMPLE.replace("65% used", "165% used"), NOW), { ok: false, reason: "session line unparseable" });
+  assert.deepEqual(parseClaudeUsage("Usage data unavailable", NOW), { ok: false, reason: "weekly (all models) line missing" });
 });
 
 test("am/pm edges: 12am is midnight, 12pm is noon, 13pm is invalid", () => {
@@ -114,8 +142,15 @@ test("probe uses safe, non-persistent arguments and projects only official windo
     });
     await assert.rejects(
       probeClaudeUsage({ stateDir, installationId: "install-claude-01", binary: "/bin/false", runner: async () => JSON.stringify({ type: "result", result: "Current week (Fable): 62% used" }) }),
-      /parseable/,
+      /parseable session and weekly limits \(weekly \(all models\) line missing\)/,
     );
+    const idle = (result: string) =>
+      probeClaudeUsage({ stateDir, installationId: "install-claude-01", binary: "/bin/false", now: () => NOW, runner: async () => JSON.stringify({ type: "result", result }) });
+    assert.deepEqual((await idle(IDLE_NO_RESET)).rate_limits, {
+      five_hour: { used_percentage: 0, resets_at: null },
+      seven_day: { used_percentage: 50, resets_at: sec("2026-10-27T04:59:00Z") },
+    });
+    assert.deepEqual((await idle(IDLE_NO_LINE)).rate_limits, { seven_day: { used_percentage: 50, resets_at: sec("2026-10-27T04:59:00Z") } });
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }
