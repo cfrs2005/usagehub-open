@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { collectCodexSamples, runCodexLoop } from "../codex/collector.js";
+import { collectCodexSamples } from "../codex/collector.js";
+import { runScheduler } from "../runtime/scheduler.js";
 
 function numberArgument(args: string[], name: string): number | undefined {
   const index = args.indexOf(name);
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());
   process.once("SIGTERM", () => controller.abort());
-  await runCodexLoop({ signal: controller.signal });
+  await runScheduler({ signal: controller.signal });
 }
 
 main().catch((error: Error) => {

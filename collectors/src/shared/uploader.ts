@@ -4,7 +4,7 @@ import { listPending, readRecord, removeRecord, tryAcquireWorkerLock } from "./q
 import { createSignedHeaders } from "./signer.js";
 import type { QueueRecord } from "./types.js";
 
-export type UploadResult = { sent: number; pending: number; locked?: true };
+export type UploadResult = { sent: number; pending: number; locked?: true; error?: string };
 
 export async function uploadRecord(
   config: CollectorConfig,
@@ -41,6 +41,7 @@ export async function uploadPending(
   const release = tryAcquireWorkerLock(config.stateDir);
   if (!release) return { sent: 0, pending: listPending(config.stateDir).length, locked: true };
   let sent = 0;
+  let lastError: string | undefined;
   try {
     for (const path of listPending(config.stateDir)) {
       let record: QueueRecord;
@@ -52,13 +53,15 @@ export async function uploadPending(
       }
       try {
         await uploadRecord(config, record, fetchImplementation);
-      } catch {
+      } catch (error) {
+        lastError = error instanceof Error && error.name === "AbortError" ? "upload timed out" : (error as Error).message;
         break;
       }
       removeRecord(path);
       sent += 1;
     }
-    return { sent, pending: listPending(config.stateDir).length };
+    const pending = listPending(config.stateDir).length;
+    return lastError ? { sent, pending, error: lastError } : { sent, pending };
   } finally {
     release();
   }

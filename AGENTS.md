@@ -28,8 +28,8 @@ When a user supplies a UsageHub onboarding prompt, complete the entire local col
    The command creates a random stable installation ID and stores the long-lived collector token at `~/.local/state/usagehub/ingest-token` with owner-only permissions. `USAGEHUB_STATE_DIR` may override this location.
 4. Configure Claude Code `statusLine` to run `collectors/dist/src/cli/claude-statusline.js`. If a status line already exists, preserve it as the bridge delegate with `--delegate-base64`. Do not replace the user's visible status line.
 5. Run `collectors/dist/src/cli/codex-collector.js` as a user-level background service. Use LaunchAgent on macOS and a user systemd service on Linux. Set the working directory to `collectors/`; the default API URL and protected token file require no extra secret environment variable.
-6. The collector loop obtains:
-   - Claude 5-hour and 7-day quota only from documented `statusLine` input;
+6. The collector schedules each channel independently (intervals in `~/.config/usagehub/collector.json`, default 30 minutes, today counted in `Asia/Shanghai`) and obtains:
+   - Claude 5-hour and 7-day quota primarily from the unmodified official `claude` binary's `/usage` command (`claude -p /usage`, subscription login, zero tokens, no session persistence, safe mode), and secondarily from documented `statusLine` input — never from credentials or HTTP endpoints directly. Claude Desktop does not run `statusLine`, so the `/usage` probe is what keeps quota fresh there;
    - Codex quota only from the local read-only app-server method;
    - local token history and API-equivalent cost from `ccusage` and `ccusage-codex`.
 7. Run a three-sample Codex smoke check and a forced local-usage refresh. Confirm the background service is running, the upload queue drains, and no credential appears in output.

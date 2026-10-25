@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { loadConfig } from "../shared/config.js";
+import { loadSettings } from "../shared/settings.js";
 import { getInstallationId } from "../shared/installation.js";
 import { enqueue } from "../shared/queue.js";
 import { uploadPending } from "../shared/uploader.js";
@@ -14,6 +15,7 @@ async function main(): Promise<void> {
   const noUpload = process.argv.includes("--no-upload");
   const collector = new LocalUsageCollector({
     stateDir: config.stateDir,
+    timeZone: loadSettings().settings.timezone,
   });
   const results = await Promise.all([collector.collect("claude", force), collector.collect("codex", force)]);
   if (!noUpload) {

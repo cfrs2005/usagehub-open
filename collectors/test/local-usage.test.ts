@@ -11,6 +11,7 @@ test("reads an explicitly configured usage JSON source and caches by TTL", async
   let now = Date.parse("2026-09-03T06:30:00.000Z");
   const collector = new LocalUsageCollector({
     stateDir,
+    timeZone: "America/Los_Angeles",
     now: () => now,
     ttlMs: 60_000,
     sourceFiles: { codex: "/tmp/usagehub-codex.json" },
@@ -73,6 +74,7 @@ test("missing configured JSON falls back to sanitized CLI data and isolates prov
   const stateDir = mkdtempSync(join(tmpdir(), "usagehub-local-isolation-"));
   const collector = new LocalUsageCollector({
     stateDir,
+    timeZone: "America/Los_Angeles",
     now: () => Date.parse("2026-09-02T18:00:00.000Z"),
     sourceFiles: { claude: "/tmp/not-present.json", codex: "/tmp/not-present.json" },
     sourceReader: () => { throw new Error("missing file"); },
@@ -102,6 +104,7 @@ test("Claude refreshes pricing online, isolates the Claude agent, and rejects a 
   let price = 1.5;
   const collector = new LocalUsageCollector({
     stateDir,
+    timeZone: "America/Los_Angeles",
     now: () => Date.parse("2026-09-03T18:00:00.000Z"),
     sourceFiles: { claude: "/tmp/not-present.json" },
     sourceReader: () => { throw new Error("missing file"); },
@@ -135,6 +138,57 @@ test("Claude refreshes pricing online, isolates the Claude agent, and rejects a 
     assert.equal(rejected.cached, true);
     assert.equal(rejected.stale, true);
     assert.equal(rejected.total_cost_usd, 1.5);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("today defaults to Asia/Shanghai and the zone is passed to ccusage", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "usagehub-local-tz-"));
+  const seen: string[][] = [];
+  const collector = new LocalUsageCollector({
+    stateDir,
+    now: () => Date.parse("2026-09-02T18:00:00.000Z"), // 2026-09-03 02:00 in Shanghai, 2026-09-02 in Los Angeles
+    sourceFiles: {},
+    sourceReader: () => { throw new Error("missing file"); },
+    runner: async (_command, args) => {
+      seen.push(args);
+      return JSON.stringify({ daily: [
+        { date: "2026-09-02", totalTokens: 5, costUSD: 0.1 },
+        { date: "2026-09-03", totalTokens: 9, costUSD: 0.2 },
+      ] });
+    },
+  });
+  try {
+    const shanghai = await collector.collect("codex", true);
+    assert.equal(shanghai.today_tokens, 9);
+    assert.deepEqual(seen[0]?.slice(-2), ["--timezone", "Asia/Shanghai"]);
+    const la = await new LocalUsageCollector({
+      stateDir,
+      timeZone: "America/Los_Angeles",
+      now: () => Date.parse("2026-09-02T18:00:00.000Z"),
+      sourceFiles: {},
+      sourceReader: () => { throw new Error("missing file"); },
+      runner: async (_command, args) => { seen.push(args); return JSON.stringify({ daily: [{ date: "2026-09-02", totalTokens: 5, costUSD: 0.1 }] }); },
+    }).collect("codex", true);
+    assert.equal(la.today_tokens, 5);
+    assert.deepEqual(seen[1]?.slice(-2), ["--timezone", "America/Los_Angeles"]);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("a failed refresh keeps its reason for local diagnostics", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "usagehub-local-error-"));
+  try {
+    const result = await new LocalUsageCollector({
+      stateDir,
+      sourceFiles: {},
+      sourceReader: () => { throw new Error("missing file"); },
+      runner: async () => { throw new Error("spawn ccusage ENOENT"); },
+    }).collect("claude", true);
+    assert.equal(result.status, "unavailable");
+    assert.equal(result.error, "ccusage: spawn ccusage ENOENT");
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }

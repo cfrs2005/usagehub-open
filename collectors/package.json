@@ -17,7 +17,8 @@
     "codex:run": "npm run build && node dist/src/cli/codex-collector.js",
     "codex:smoke": "npm run build && node dist/src/cli/codex-collector.js --smoke-count 3 --no-upload",
     "local-usage": "npm run build && node dist/src/cli/local-usage.js",
-    "enroll": "npm run build && node dist/src/cli/enroll.js"
+    "enroll": "npm run build && node dist/src/cli/enroll.js",
+    "collect-now": "npm run build && node dist/src/cli/collect-now.js"
   },
   "devDependencies": {
     "@types/node": "22.15.30",

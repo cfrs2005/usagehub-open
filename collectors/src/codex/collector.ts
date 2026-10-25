@@ -1,13 +1,8 @@
-import { setTimeout as delay } from "node:timers/promises";
 import { loadConfig, type CollectorConfig } from "../shared/config.js";
 import { getInstallationId } from "../shared/installation.js";
 import { enqueue } from "../shared/queue.js";
 import { uploadPending } from "../shared/uploader.js";
 import type { CodexPayload } from "../shared/types.js";
-import {
-  LocalUsageCollector,
-  toTokenUsagePayload,
-} from "../local-usage/collector.js";
 import { CodexAppServerClient } from "./app-server.js";
 import { projectCodexRateLimits } from "./project.js";
 
@@ -48,50 +43,5 @@ export async function collectCodexSamples(
     return samples;
   } finally {
     if (ownsClient) await client.close();
-  }
-}
-
-export type CodexLoopOptions = {
-  intervalMs?: number;
-  backoffMs?: number[];
-  signal?: AbortSignal;
-  config?: CollectorConfig;
-};
-
-export async function runCodexLoop(options: CodexLoopOptions = {}): Promise<void> {
-  const intervalMs = options.intervalMs ?? 120_000;
-  const backoff = options.backoffMs ?? [300_000, 900_000, 1_800_000];
-  let failures = 0;
-  while (!options.signal?.aborted) {
-    try {
-      const config = options.config ?? loadConfig();
-      await collectCodexSamples(1, { config });
-      const localCollector = new LocalUsageCollector({ stateDir: config.stateDir });
-      const installationId = getInstallationId(config.stateDir, config.installationId);
-      const localResults = await Promise.all([
-        localCollector.collect("claude"),
-        localCollector.collect("codex"),
-      ]);
-      for (const result of localResults) {
-        if (result.cached) continue;
-        const payload = toTokenUsagePayload(result, installationId);
-        if (payload) {
-          enqueue(config.stateDir, { provider: result.provider, kind: "token_usage", payload }, config.maxQueueItems);
-        }
-      }
-      await uploadPending(config);
-      failures = 0;
-      await delay(intervalMs, undefined, { signal: options.signal });
-    } catch (error) {
-      if (options.signal?.aborted) break;
-      const wait = backoff[Math.min(failures, backoff.length - 1)] ?? 1_800_000;
-      failures += 1;
-      process.stderr.write(`Codex collector retry scheduled in ${Math.round(wait / 60_000)} minutes\n`);
-      try {
-        await delay(wait, undefined, { signal: options.signal });
-      } catch {
-        break;
-      }
-    }
   }
 }

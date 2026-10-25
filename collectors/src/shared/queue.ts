@@ -67,6 +67,19 @@ export function removeRecord(path: string): void {
   rmSync(path, { force: true });
 }
 
+/** A lock whose recorded owner process no longer exists (e.g. killed by a service restart) is stale at once. */
+function lockOwnerAlive(lock: string): boolean {
+  const pid = Number(readFileSync(lock, "utf8").trim());
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 export function tryAcquireWorkerLock(stateDir: string, staleAfterMs = 60_000): (() => void) | null {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const lock = join(stateDir, "upload-worker.lock");
@@ -77,7 +90,7 @@ export function tryAcquireWorkerLock(stateDir: string, staleAfterMs = 60_000): (
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     try {
-      if (Date.now() - statSync(lock).mtimeMs <= staleAfterMs) return null;
+      if (Date.now() - statSync(lock).mtimeMs <= staleAfterMs && lockOwnerAlive(lock)) return null;
       rmSync(lock, { force: true });
       return tryAcquireWorkerLock(stateDir, staleAfterMs);
     } catch {

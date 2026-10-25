@@ -4,7 +4,7 @@ This is an AI-agent and maintainer reference. Human users should generate one on
 
 These Node 22 collectors upload allowlisted Claude and Codex usage snapshots to UsageHub Cloud or a compatible server.
 
-- Claude: `statusLine` JSON is reduced to official quota fields.
+- Claude: quota comes from two documented local sources, both reduced to the official 5-hour and 7-day fields: Claude Code `statusLine` JSON, and the official `claude` binary answering `claude -p "/usage" --output-format json` (works when you only use Claude desktop). The server keeps the snapshot with the newest `observed_at`.
 - Codex: the read-only `account/rateLimits/read` app-server call is reduced to official quota fields.
 - Local history: optional `ccusage` and `ccusage-codex` data is explicitly labelled as API-equivalent cost, not an official remaining quota.
 
@@ -42,6 +42,50 @@ USAGEHUB_CODEX_USAGE_JSON=/absolute/path/codex-usage.json
 The configured JSON files are optional. Without them, the local-history collector calls the relevant `ccusage` command directly. The code never assumes a machine-specific source path.
 
 Claude pricing is refreshed by `ccusage` instead of forcing its bundled offline catalog. Use `ccusage` 20 or newer: the collector requests its per-agent report and imports only the Claude row. If a new Claude model has tokens but no price coverage, the collector rejects the zero-cost result and retains the last valid snapshot.
+
+## Schedule settings file
+
+The background collector reads `~/.config/usagehub/collector.json` (override the path with `USAGEHUB_CONFIG`). If the file is missing, the first run writes this template with owner-only permissions:
+
+```json
+{
+  "claudeQuotaMinutes": 30,
+  "codexQuotaMinutes": 30,
+  "tokenUsageMinutes": 30,
+  "timezone": "Asia/Shanghai"
+}
+```
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `claudeQuotaMinutes` | interval for running `claude -p "/usage"` | 30 |
+| `codexQuotaMinutes` | interval for the Codex app-server quota read | 30 |
+| `tokenUsageMinutes` | interval for the `ccusage` / `ccusage-codex` history (Claude and Codex run as separate channels) | 30 |
+| `timezone` | IANA zone that defines "today" for token history; passed to `ccusage --timezone` | `Asia/Shanghai` |
+
+Intervals are whole minutes from 1 to 1440. An invalid field falls back to its default and prints a warning on stderr. Precedence is environment variable > file > default; the optional environment overrides are `USAGEHUB_CLAUDE_USAGE_INTERVAL_MS` (milliseconds) and `USAGEHUB_TIMEZONE`. The file is re-read at least once a minute, so edits apply at the next scheduled run without a restart.
+
+Each channel (`claude_quota`, `codex_quota`, `claude_token_usage`, `codex_token_usage`) is scheduled and retried independently. After a failure the channel retries after min(interval, 5 / 15 / 30 minutes) for the first / second / later consecutive failure; other channels are not affected. A failed channel uploads nothing, so the dashboard ages that snapshot into "stale" instead of showing a guess. Failure reasons (never credentials) go to stderr and to `lastError` in `$USAGEHUB_STATE_DIR/collector-health.json`, which also records `observedAt` / `uploadedAt` per channel.
+
+### Claude `/usage` probe
+
+The collector locates `claude` by absolute path (`USAGEHUB_CLAUDE_BIN`, then `command -v claude`, `/opt/homebrew/bin`, `~/.local/bin`, `~/.claude/local`) and runs, with a 90-second timeout and its working directory set to `$USAGEHUB_STATE_DIR/claude-usage-probe`:
+
+```text
+claude -p /usage --output-format json --no-session-persistence --safe-mode \
+  --setting-sources "" --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+```
+
+`/usage` is answered locally and costs no tokens. `--bare` is deliberately not used because it does not read the subscription login. `--safe-mode` and `--setting-sources ""` keep user hooks, plugins and MCP servers out of the probe, and `--no-session-persistence` keeps it out of the session list and `ccusage`. Only the `Current session` (5-hour) and `Current week (all models)` (7-day) lines are used; per-model weekly lines are dropped because the ingest contract has no field for them. If either line, its percentage, or its reset time (`Oct 24 at 11:09pm (America/Los_Angeles)`, also time-only or with a year) cannot be parsed, nothing is uploaded.
+
+### Collect now (debugging)
+
+```bash
+npm run collect-now --workspace @usagehub/collectors
+npm run collect-now --workspace @usagehub/collectors -- --only claude   # or codex | tokens
+```
+
+It runs the selected channels once, uploads, updates the health file, and prints one summary line per channel (no credentials). It needs the same ingest token as the service (token file or `USAGEHUB_INGEST_TOKEN`); without it the records stay queued and the background service delivers them later. It is safe to run while the service is running: uploads share the queue lock and wait for it briefly.
 
 ## Request security
 

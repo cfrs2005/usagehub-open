@@ -78,7 +78,7 @@ test("uploader sends bearer authentication and signed strict bodies, then retain
 
     enqueue(stateDir, { provider: "claude", payload }, 2);
     const failed = await uploadPending(config, async () => new Response(null, { status: 503 }));
-    assert.deepEqual(failed, { sent: 0, pending: 1 });
+    assert.deepEqual(failed, { sent: 0, pending: 1, error: "hub returned HTTP 503" });
     assert.equal(listPending(stateDir).length, 1);
   } finally {
     rmSync(stateDir, { recursive: true, force: true });

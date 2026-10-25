@@ -3,10 +3,11 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { TokenUsagePayload } from "../shared/types.js";
+import { DEFAULT_SETTINGS } from "../shared/settings.js";
+import { zonedDate } from "../shared/zoned-time.js";
 
 const execFileAsync = promisify(execFile);
 const COST_LABEL = "标准 API 等价费用" as const;
-const TIME_ZONE = "America/Los_Angeles";
 
 export type LocalProvider = "claude" | "codex";
 export type LocalUsageSource = "ccusage" | "ccusage_codex";
@@ -26,6 +27,8 @@ export type LocalUsageResult = {
   stale?: true;
   daily_usage?: Array<{ date: string; tokens: number; costUsd: number }>;
   model_usage?: Array<{ model: string; tokens: number; costUsd: number }>;
+  /** Local diagnostic only (never uploaded): why a fresh read failed. */
+  error?: string;
 };
 
 export type CommandRunner = (command: string, args: string[], timeoutMs: number) => Promise<string>;
@@ -39,6 +42,8 @@ export type LocalUsageOptions = {
   runner?: CommandRunner;
   sourceFiles?: Partial<Record<LocalProvider, string>>;
   sourceReader?: SourceReader;
+  /** IANA zone that defines "today"; defaults to Asia/Shanghai. */
+  timeZone?: string;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -60,18 +65,6 @@ function nonNegativeMoney(value: unknown, label: string): number {
     throw new Error(`${label} is invalid`);
   }
   return Math.round(parsed * 1_000_000) / 1_000_000;
-}
-
-function localDate(now: number): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(now));
-  const field = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${field("year")}-${field("month")}-${field("day")}`;
 }
 
 function normalizeDate(value: unknown): string | null {
@@ -129,11 +122,12 @@ function projectDashboardFile(
   value: unknown,
   now: number,
   observedAtMs: number,
+  timeZone: string,
 ): LocalUsageResult {
   if (!isRecord(value) || !isRecord(value.overview) || !Array.isArray(value.overview.heatmap)) {
     throw new Error("usage dashboard JSON shape is invalid");
   }
-  const today = localDate(now);
+  const today = zonedDate(now, timeZone);
   const row = value.overview.heatmap.find((candidate) =>
     isRecord(candidate) && normalizeDate(candidate.date) === today,
   );
@@ -157,9 +151,9 @@ function projectDashboardFile(
   return result;
 }
 
-function projectCliOutput(provider: LocalProvider, value: unknown, now: number): LocalUsageResult {
+function projectCliOutput(provider: LocalProvider, value: unknown, now: number, timeZone: string): LocalUsageResult {
   if (!isRecord(value) || !Array.isArray(value.daily)) throw new Error("ccusage daily output is invalid");
-  const today = localDate(now);
+  const today = zonedDate(now, timeZone);
   const rows = value.daily.filter(isRecord).map((row) => {
     if (provider !== "claude" || !Array.isArray(row.agents)) return row;
     const claude = row.agents.find((candidate) => isRecord(candidate) && candidate.agent === "claude");
@@ -230,6 +224,7 @@ export class LocalUsageCollector {
     runner: CommandRunner;
     sourceFiles: Partial<Record<LocalProvider, string>>;
     sourceReader: SourceReader;
+    timeZone: string;
   };
 
   constructor(options: LocalUsageOptions) {
@@ -248,6 +243,7 @@ export class LocalUsageCollector {
         text: readFileSync(path, "utf8"),
         modifiedAtMs: statSync(path).mtimeMs,
       })),
+      timeZone: options.timeZone ?? DEFAULT_SETTINGS.timezone,
     };
   }
 
@@ -258,25 +254,28 @@ export class LocalUsageCollector {
       return { ...cached.result, cached: true };
     }
 
+    const timeZone = this.#options.timeZone;
     try {
       const sourcePath = this.#options.sourceFiles[provider];
       if (!sourcePath) throw new Error("no configured usage JSON source");
       const source = this.#options.sourceReader(sourcePath);
-      const result = requireClaudeCostCoverage(projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs));
+      const result = requireClaudeCostCoverage(projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs, timeZone));
       this.#writeCache(provider, { cachedAt: now, result });
       return result;
     } catch {
       const [command, args] = provider === "claude"
-        ? ["ccusage", ["daily", "--json", "--no-color", "--by-agent", "--timezone", TIME_ZONE]]
-        : ["ccusage-codex", ["daily", "--json", "--offline", "--noColor", "--locale", "en-US", "--timezone", TIME_ZONE]];
+        ? ["ccusage", ["daily", "--json", "--no-color", "--by-agent", "--timezone", timeZone]]
+        : ["ccusage-codex", ["daily", "--json", "--offline", "--noColor", "--locale", "en-US", "--timezone", timeZone]];
       try {
         const stdout = await this.#options.runner(command, args, this.#options.timeoutMs);
-        const result = requireClaudeCostCoverage(projectCliOutput(provider, JSON.parse(stdout) as unknown, now));
+        const result = requireClaudeCostCoverage(projectCliOutput(provider, JSON.parse(stdout) as unknown, now, timeZone));
         this.#writeCache(provider, { cachedAt: now, result });
         return result;
-      } catch {
-        if (cached) return { ...cached.result, cached: true, stale: true };
+      } catch (error) {
+        const reason = `${command}: ${(error as Error).message}`.replace(/\s+/g, " ").slice(0, 300);
+        if (cached) return { ...cached.result, cached: true, stale: true, error: reason };
         return {
+          error: reason,
           provider,
           source: sourceFor(provider),
           quota_semantics: "not_official_remaining_quota",
