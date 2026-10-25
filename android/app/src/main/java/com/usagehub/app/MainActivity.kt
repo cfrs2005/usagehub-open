@@ -11,6 +11,12 @@ import android.content.DialogInterface
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.net.Uri
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
 import android.os.Bundle
 import android.os.Build
 import android.os.Handler
@@ -34,6 +40,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     private lateinit var dashboardView: DashboardView
+    private var consoleView: WebView? = null
+    private var consoleMode = false
     private lateinit var storage: AppStorage
     private val client = DashboardClient()
     private val handler = Handler(Looper.getMainLooper())
@@ -75,7 +83,7 @@ class MainActivity : Activity() {
             onOpenSettings = { showSettings() }
             onOpenHome = { openSystemHome() }
         }
-        setContentView(dashboardView)
+        if (config.webConsole && !storage.readDisplayToken().isNullOrBlank()) showConsole() else setContentView(dashboardView)
         applyWindowBehavior()
         applyBrightness()
         applyImmersiveMode()
@@ -90,6 +98,7 @@ class MainActivity : Activity() {
             else @Suppress("DEPRECATION") registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
             screenReceiverRegistered = true
         }
+        if (consoleMode) return
         handler.removeCallbacks(clockTick)
         handler.post(clockTick)
         scheduleRefresh(0L)
@@ -112,6 +121,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        consoleView?.destroy()
+        consoleView = null
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -170,6 +181,7 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
+        if (consoleMode) return
         dashboardView.state = DashboardScreenState(
             nowMillis = System.currentTimeMillis(),
             snapshot = snapshot,
@@ -230,6 +242,44 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
     }
 
+    /** The console is the same web UI as u.80aj.com/app, opened with a read-only display token. */
+    private fun showConsole() {
+        val token = storage.readDisplayToken()
+        if (token.isNullOrBlank()) { setContentView(dashboardView); return }
+        val web = WebView(this).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            setBackgroundColor(Color.parseColor("#070910"))
+            webViewClient = object : WebViewClient() {
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                    if (request.isForMainFrame) handler.post { fallbackToNative("网页看板加载失败") }
+                }
+                @Deprecated("Deprecated in Java")
+                override fun onReceivedError(view: WebView, errorCode: Int, description: String?, failingUrl: String?) {
+                    handler.post { fallbackToNative("网页看板加载失败") }
+                }
+            }
+            setOnLongClickListener { showSettings(); true }
+            loadUrl("${config.serverUrl.trimEnd('/')}/app#token=${Uri.encode(token)}")
+        }
+        consoleView = web
+        consoleMode = true
+        setContentView(web)
+    }
+
+    private fun fallbackToNative(reason: String) {
+        if (!consoleMode) return
+        consoleMode = false
+        consoleView?.destroy()
+        consoleView = null
+        setContentView(dashboardView)
+        statusMessage = reason
+        render()
+        handler.post { scheduleRefresh(0L) }
+        Toast.makeText(this, reason + "，已切回原生看板", Toast.LENGTH_LONG).show()
+    }
+
     private fun showSettings() {
         val padding = dp(22)
         val layout = LinearLayout(this).apply {
@@ -280,6 +330,10 @@ class MainActivity : Activity() {
             text = "全屏显示（隐藏系统导航键）"
             isChecked = config.immersiveMode
         }
+        val webConsole = CheckBox(this).apply {
+            text = "使用网页看板（与云端界面一致，长按可回到设置）"
+            isChecked = config.webConsole
+        }
         layout.addView(label("服务地址"))
         layout.addView(serverInput)
         layout.addView(label("Display token · encrypted by Android Keystore"))
@@ -290,6 +344,7 @@ class MainActivity : Activity() {
         layout.addView(showOnLockScreen)
         layout.addView(keepScreenOn)
         layout.addView(immersiveMode)
+        layout.addView(webConsole)
         val scroll = ScrollView(this).apply { addView(layout) }
 
         val dialog = AlertDialog.Builder(this)
@@ -319,6 +374,7 @@ class MainActivity : Activity() {
                     showOnLockScreen = showOnLockScreen.isChecked,
                     keepScreenOn = keepScreenOn.isChecked,
                     immersiveMode = immersiveMode.isChecked,
+                    webConsole = webConsole.isChecked,
                 )
                 dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = false
                 tokenInput.isEnabled = false
@@ -341,7 +397,7 @@ class MainActivity : Activity() {
                             applyBrightness()
                             statusMessage = "设置已保存"
                             dialog.dismiss()
-                            render()
+                            recreate()
                             scheduleRefresh(0L)
                         }
                     }

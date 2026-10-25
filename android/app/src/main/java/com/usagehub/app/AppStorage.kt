@@ -20,6 +20,7 @@ data class AppConfig(
     val showOnLockScreen: Boolean,
     val keepScreenOn: Boolean,
     val immersiveMode: Boolean,
+    val webConsole: Boolean = true,
 )
 
 class AppStorage(private val context: Context) {
@@ -35,6 +36,7 @@ class AppStorage(private val context: Context) {
         showOnLockScreen = preferences.getBoolean("show_on_lock_screen", true),
         keepScreenOn = preferences.getBoolean("keep_screen_on", false),
         immersiveMode = preferences.getBoolean("immersive_mode", true),
+        webConsole = preferences.getBoolean("web_console", true),
     )
 
     fun saveConfig(config: AppConfig) {
@@ -46,6 +48,7 @@ class AppStorage(private val context: Context) {
             .putBoolean("show_on_lock_screen", config.showOnLockScreen)
             .putBoolean("keep_screen_on", config.keepScreenOn)
             .putBoolean("immersive_mode", config.immersiveMode)
+            .putBoolean("web_console", config.webConsole)
             .apply()
     }
 
