@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/test/*.test.js",
+    "test": "npm run build && node -e \"const fs=require('node:fs'),cp=require('node:child_process');const files=fs.readdirSync('test').filter(f=>f.endsWith('.test.ts')).map(f=>'dist/test/'+f.replace(/\\.ts$/,'.js'));const r=cp.spawnSync(process.execPath,['--test',...files],{stdio:'inherit'});process.exit(r.status??1)\"",
     "test:claude": "npm run build && node --test dist/test/claude.test.js dist/test/signer.test.js",
     "test:codex": "npm run build && node --test dist/test/codex.test.js",
     "test:local-usage": "npm run build && node --test dist/test/local-usage.test.js",
