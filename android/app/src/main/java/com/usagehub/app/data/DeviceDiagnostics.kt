@@ -1,9 +1,10 @@
-package com.usagehub.app
+package com.usagehub.app.data
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.view.WindowManager
+import com.usagehub.app.BuildConfig
 
 data class DeviceDiagnostics(
     val widthPixels: Int,

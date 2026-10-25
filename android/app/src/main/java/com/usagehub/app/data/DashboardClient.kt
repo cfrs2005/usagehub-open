@@ -1,4 +1,4 @@
-package com.usagehub.app
+package com.usagehub.app.data
 
 import org.json.JSONObject
 import java.io.InputStream
@@ -32,6 +32,12 @@ class DashboardClient {
             true
         }.getOrDefault(false)
         return FetchResult(snapshot, healthOk, profile.first, profile.second)
+    }
+
+    /** Raw authenticated GET of a read-only endpoint (analytics / history); the caller parses. */
+    fun get(baseUrl: String, key: String, pathAndQuery: String): String {
+        requireSecureUrl(baseUrl)
+        return request("${baseUrl.trimEnd('/')}$pathAndQuery", authorization = "Bearer $key")
     }
 
     fun health(baseUrl: String): Boolean {
@@ -79,7 +85,7 @@ class DashboardClient {
                 connection.errorStream?.use { it.readLimited(4_096) }
                 throw IllegalStateException("HTTP $status")
             }
-            return connection.inputStream.use { it.readLimited(1_048_576) }
+            return connection.inputStream.use { it.readLimited(4_194_304) }
         } finally {
             connection.disconnect()
         }

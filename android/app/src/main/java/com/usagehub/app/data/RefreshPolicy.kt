@@ -1,4 +1,4 @@
-package com.usagehub.app
+package com.usagehub.app.data
 
 class RefreshPolicy(
     private val normalIntervalMillis: Long = 2L * 60L * 1000L,

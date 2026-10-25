@@ -1,4 +1,4 @@
-package com.usagehub.app
+package com.usagehub.app.data
 
 import java.time.Duration
 import java.time.Instant
@@ -25,6 +25,8 @@ data class ProviderUsage(
     val upstreamStale: Boolean,
     val windows: List<UsageWindow>,
     val tokenUsage: TokenUsage = TokenUsage.missing(),
+    /** The server's own `stale` flag, without the local "incomplete window" judgement folded into [upstreamStale]. */
+    val serverStale: Boolean = upstreamStale,
 )
 
 data class TokenUsage(

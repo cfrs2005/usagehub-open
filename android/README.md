@@ -8,7 +8,17 @@ An optional `kiosk` flavor is available for a dedicated wall display. It adds th
 
 ## Pairing and privacy
 
-Create a 10-minute pairing code while signed in to `https://u.80aj.com`, then enter it through the visible Settings button. The app exchanges it once for a read-only display token encrypted by Android Keystore. A direct display token is also accepted. The app calls only the pairing, dashboard, and health endpoints over HTTPS.
+Create a 10-minute pairing code while signed in to `https://u.80aj.com`, then enter it through the visible Settings button. The app exchanges it once for a read-only display token encrypted by Android Keystore. A direct display token is also accepted. The app calls only read-only endpoints over HTTPS: pairing, dashboard, analytics, history, display profile/avatar, and health. The last successful responses are cached on the device, so the screen keeps showing them (marked 离线) when the network is down.
+
+## Screens
+
+The dashboard is drawn natively (custom Canvas views, no WebView): 首页 / 用量 / 模型 / 统计 / 设置 plus a per-vendor detail page, designed for a 740x360 dp landscape screen. Code layout: `data/` (models, JSON parsing, formatting rules), `ui/` (theme, widgets, charts), `pages/` (one file per page plus the shell view).
+
+Debug builds can render fixed demo data for screenshots; release builds do not contain the fixture:
+
+```bash
+adb shell am start -n com.usagehub.app.debug/com.usagehub.app.MainActivity --ez mock true --es tab home   # usage|models|stats|settings|settings-2|detail-claude
+```
 
 ## Build
 

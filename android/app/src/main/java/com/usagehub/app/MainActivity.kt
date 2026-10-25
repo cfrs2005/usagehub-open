@@ -5,20 +5,12 @@ import android.app.AlertDialog
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.DialogInterface
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.net.Uri
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.Toast
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -26,34 +18,35 @@ import android.text.InputType
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.widget.ArrayAdapter
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.SeekBar
-import android.widget.Spinner
-import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import com.usagehub.app.data.ConsoleRules
+import com.usagehub.app.data.DashboardClient
+import com.usagehub.app.data.DiagnosticsReader
+import com.usagehub.app.data.RefreshPolicy
+import com.usagehub.app.pages.ConsoleView
+import com.usagehub.app.ui.Action
+import com.usagehub.app.ui.Nav
+import com.usagehub.app.ui.Screen
+import com.usagehub.app.ui.Tab
 import java.net.URL
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
-    private lateinit var dashboardView: DashboardView
-    private var consoleView: WebView? = null
-    private var consoleMode = false
+    private lateinit var view: ConsoleView
     private lateinit var storage: AppStorage
+    private lateinit var hub: DataHub
     private val client = DashboardClient()
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
-    private val fetchInFlight = AtomicBoolean(false)
-    private var snapshot: DashboardSnapshot? = null
-    private var displayName = "UsageHub"
-    private var avatar: Bitmap? = null
-    private var config = AppConfig("https://u.80aj.com", 45, 2, DisplayMode.USED, true, false, true)
+    private var config = AppConfig("https://u.80aj.com", 45, 2, com.usagehub.app.data.DisplayMode.USED, true, false, true)
     private var refreshPolicy = RefreshPolicy()
-    private var healthOk = false
-    private var statusMessage = "正在启动"
+    private var nav = Nav()
+    private var mockSource: Source? = null
     private var started = false
     private var screenReceiverRegistered = false
     private val screenReceiver = object : BroadcastReceiver() {
@@ -65,29 +58,34 @@ class MainActivity : Activity() {
     private val clockTick = object : Runnable {
         override fun run() {
             render()
-            if (started) handler.postDelayed(this, delayToNextMinute())
+            if (started) handler.postDelayed(this, 60_000L - System.currentTimeMillis() % 60_000L)
         }
     }
 
-    private val scheduledFetch = Runnable { refresh() }
+    private val scheduledFetch = Runnable { refreshAll() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         storage = AppStorage(this)
         config = storage.loadConfig()
-        snapshot = storage.readCache()
-        displayName = storage.readDisplayName()
-        avatar = storage.readAvatar()?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
         refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
-        dashboardView = DashboardView(this).apply {
-            onOpenSettings = { showSettings() }
-            onOpenHome = { openSystemHome() }
-        }
-        if (config.webConsole && !storage.readDisplayToken().isNullOrBlank()) showConsole() else setContentView(dashboardView)
+        if (BuildConfig.DEBUG && intent.getBooleanExtra("mock", false)) mockSource = MockFixture.source(this)
+        hub = DataHub(storage, executor, handler) { render() }
+        nav = initialNav(intent.getStringExtra("tab"))
+        view = ConsoleView(this).apply { onAction = ::onAction }
+        setContentView(view)
         applyWindowBehavior()
         applyBrightness()
         applyImmersiveMode()
         render()
+    }
+
+    private fun initialNav(tab: String?): Nav {
+        if (mockSource == null && storage.readDisplayToken().isNullOrBlank()) return Nav(tab = Tab.SETTINGS, settingsTab = 0)
+        tab ?: return Nav()
+        if (tab.startsWith("detail-")) return Nav(detail = tab.removePrefix("detail-").takeIf { it == "claude" || it == "codex" })
+        if (tab.startsWith("settings-")) return Nav(tab = Tab.SETTINGS, settingsTab = tab.removePrefix("settings-").toIntOrNull()?.coerceIn(0, 4) ?: 0)
+        return Nav(tab = Tab.values().firstOrNull { it.key == tab } ?: Tab.HOME)
     }
 
     override fun onStart() {
@@ -98,7 +96,6 @@ class MainActivity : Activity() {
             else @Suppress("DEPRECATION") registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
             screenReceiverRegistered = true
         }
-        if (consoleMode) return
         handler.removeCallbacks(clockTick)
         handler.post(clockTick)
         scheduleRefresh(0L)
@@ -121,58 +118,70 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        consoleView?.destroy()
-        consoleView = null
         executor.shutdownNow()
         super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) applyImmersiveMode()
-        if (hasFocus) dismissNonSecureKeyguard()
+        if (hasFocus) {
+            applyImmersiveMode()
+            dismissNonSecureKeyguard()
+        }
     }
 
-    private fun refresh() {
-        if (!started || !fetchInFlight.compareAndSet(false, true)) return
-        val requestConfig = config
-        val token = storage.readDisplayToken()
-        if (token.isNullOrBlank()) {
-            statusMessage = "等待配置"
-            healthOk = false
-            fetchInFlight.set(false)
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (nav.detail != null) onAction(Action.Back) else @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    /* ------------------------------------------------------------------ data */
+
+    private fun source(): Source? {
+        mockSource?.let { return it }
+        val token = storage.readDisplayToken()?.takeIf { it.isNotBlank() } ?: return null
+        return ServerSource(client, config.serverUrl, token)
+    }
+
+    private fun refreshAll() {
+        if (!started) return
+        val source = source()
+        if (source == null) {
+            hub.statusMessage = "等待配对"
             render()
-            scheduleRefresh(requestConfig.refreshMinutes * 60_000L)
+            scheduleRefresh(config.refreshMinutes * 60_000L)
             return
         }
-        statusMessage = "正在同步"
+        hub.refreshDashboard(source) { ok -> scheduleRefresh(if (ok) refreshPolicy.onSuccess() else refreshPolicy.onFailure()) }
+        requestPageData(source)
         render()
-        executor.execute {
-            val result = runCatching {
-                client.fetch(requestConfig.serverUrl, token, System.currentTimeMillis())
+    }
+
+    private fun requestPageData(source: Source? = source()) {
+        source ?: return
+        val now = System.currentTimeMillis()
+        val detail = nav.detail
+        when {
+            detail != null -> {
+                hub.analytics(nav.detailDays, source, now)
+                hub.history(detail, nav.detailDays, nav.recordLimit, source, now)
             }
-            handler.post {
-                fetchInFlight.set(false)
-                result.onSuccess { fetched ->
-                    snapshot = fetched.snapshot
-                    healthOk = fetched.healthOk
-                    storage.writeCache(fetched.snapshot)
-                    displayName = fetched.displayName
-                    avatar = fetched.avatar?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-                    storage.writeDisplayProfile(displayName, fetched.avatar)
-                    statusMessage = if (healthOk) "服务正常" else "数据已更新"
-                    scheduleRefresh(refreshPolicy.onSuccess())
-                }.onFailure { error ->
-                    healthOk = false
-                    statusMessage = when (error.message) {
-                        "HTTPS is required" -> "仅支持 HTTPS"
-                        else -> "使用上次数据"
-                    }
-                    scheduleRefresh(refreshPolicy.onFailure())
-                }
-                render()
+            nav.tab == Tab.USAGE -> hub.analytics(nav.usageDays, source, now)
+            nav.tab == Tab.STATS -> hub.analytics(nav.statsDays, source, now)
+            nav.tab == Tab.MODELS -> {
+                hub.analytics(7, source, now)
+                val (week, day) = boundaries()
+                hub.baseline("week", week, source)
+                hub.baseline("day", day, source)
             }
+            else -> Unit
         }
+    }
+
+    /** Model-delta boundaries: local midnight today, and local midnight 6 days earlier (7 calendar days). */
+    private fun boundaries(): Pair<Long, Long> {
+        val midnight = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond()
+        return (midnight - 6 * ConsoleRules.DAY) to midnight
     }
 
     private fun scheduleRefresh(delayMillis: Long) {
@@ -181,39 +190,183 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
-        if (consoleMode) return
-        dashboardView.state = DashboardScreenState(
-            nowMillis = System.currentTimeMillis(),
-            snapshot = snapshot,
-            diagnostics = DiagnosticsReader.read(this, healthOk),
-            statusMessage = statusMessage,
-            refreshMinutes = config.refreshMinutes,
-            displayName = displayName,
-            avatar = avatar,
+        if (!::view.isInitialized) return
+        val (week, day) = boundaries()
+        val detail = nav.detail
+        view.screen = Screen(
+            now = System.currentTimeMillis(),
+            nav = nav,
+            displayName = hub.displayName,
+            avatar = hub.avatar,
+            dashboard = hub.dashboard,
+            analytics = HashMap(hub.analytics),
+            history = detail?.let { hub.history(it, nav.detailDays, nav.recordLimit) },
+            modelRows = hub.modelRows(week, day, nav.modelQuery),
+            offline = hub.offline,
+            lastSuccessMillis = hub.lastSuccessMillis,
+            paired = !storage.readDisplayToken().isNullOrBlank(),
+            config = config,
+            diagnostics = if (nav.tab == Tab.SETTINGS) DiagnosticsReader.read(this, hub.healthOk) else null,
+            healthOk = hub.healthOk,
+            statusMessage = hub.statusMessage,
+            versionName = BuildConfig.VERSION_NAME,
+            mock = mockSource != null,
+            cacheBytes = if (nav.tab == Tab.SETTINGS) storage.cacheBytes() else 0L,
         )
     }
 
-    private fun enterImmersiveMode() {
-        window.setDecorFitsSystemWindows(false)
-        window.insetsController?.apply {
-            hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    /* ------------------------------------------------------------------ actions */
+
+    private fun onAction(action: Action) {
+        val before = nav
+        nav = when (action) {
+            is Action.GoTab -> nav.copy(tab = action.tab, detail = null)
+            is Action.OpenDetail -> nav.copy(detail = action.provider, recordsExpanded = false)
+            Action.Back -> nav.copy(detail = null)
+            is Action.UsageDays -> nav.copy(usageDays = action.days)
+            is Action.StatsDays -> nav.copy(statsDays = action.days)
+            is Action.DetailDays -> nav.copy(detailDays = action.days)
+            Action.ToggleRecords -> nav.copy(recordsExpanded = !nav.recordsExpanded)
+            is Action.ModelFilter -> nav.copy(modelFilter = action.filter)
+            is Action.SettingsTab -> nav.copy(settingsTab = action.index)
+            else -> nav
         }
+        when (action) {
+            Action.Refresh -> { refreshPolicy.reset(); refreshAll() }
+            Action.EditSearch -> editSearch()
+            Action.EditServer -> editServer()
+            Action.Pair -> pair()
+            Action.ToggleImmersive -> updateConfig(config.copy(immersiveMode = !config.immersiveMode))
+            Action.ToggleKeepOn -> updateConfig(config.copy(keepScreenOn = !config.keepScreenOn))
+            Action.ToggleLockScreen -> updateConfig(config.copy(showOnLockScreen = !config.showOnLockScreen))
+            is Action.Brightness -> updateConfig(config.copy(brightnessPercent = (config.brightnessPercent + action.delta).coerceIn(10, 100)))
+            is Action.Interval -> {
+                updateConfig(config.copy(refreshMinutes = action.minutes))
+                refreshPolicy = RefreshPolicy(action.minutes * 60_000L)
+                scheduleRefresh(refreshPolicy.onSuccess())
+            }
+            is Action.QuotaStale -> updateConfig(config.copy(quotaStaleMinutes = action.minutes))
+            Action.ClearCache -> {
+                storage.clearCache()
+                Toast.makeText(this, "已清除本地缓存", Toast.LENGTH_SHORT).show()
+            }
+            Action.SystemSettings -> startActivity(Intent(Settings.ACTION_SETTINGS))
+            Action.SystemHome -> openSystemHome()
+            else -> Unit
+        }
+        if (nav != before) requestPageData()
+        render()
     }
 
-    private fun exitImmersiveMode() {
-        window.setDecorFitsSystemWindows(true)
-        window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+    private fun updateConfig(next: AppConfig) {
+        config = next
+        storage.saveConfig(next)
+        applyWindowBehavior()
+        applyImmersiveMode()
+        applyBrightness()
     }
+
+    /* ------------------------------------------------------------------ dialogs */
+
+    private fun dialogField(hint: String, value: String, password: Boolean): EditText = EditText(this).apply {
+        this.hint = hint
+        setText(value)
+        setSingleLine()
+        inputType = InputType.TYPE_CLASS_TEXT or if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_URI
+    }
+
+    private fun dialog(title: String, note: String?, field: EditText): AlertDialog.Builder {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+            if (note != null) addView(TextView(this@MainActivity).apply { text = note; setTextColor(Color.LTGRAY); textSize = 13f })
+            addView(field)
+        }
+        return AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert).setTitle(title).setView(layout)
+    }
+
+    private fun editSearch() {
+        val field = dialogField("搜索模型...", nav.modelQuery, false).apply { inputType = InputType.TYPE_CLASS_TEXT }
+        dialog("搜索模型", null, field)
+            .setNegativeButton("清除") { _, _ -> nav = nav.copy(modelQuery = ""); render() }
+            .setPositiveButton("确定") { _, _ -> nav = nav.copy(modelQuery = field.text.toString().trim().take(60)); render() }
+            .show()
+    }
+
+    private fun editServer() {
+        val field = dialogField("https://u.80aj.com", config.serverUrl, false)
+        val dialog = dialog("服务地址", "只支持 HTTPS。修改后需要重新配对。", field)
+            .setNegativeButton("取消", null).setPositiveButton("保存", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val server = field.text.toString().trim().trimEnd('/')
+                if (!isValidHttpsUrl(server)) {
+                    field.error = "请输入有效的 HTTPS 地址"
+                    return@setOnClickListener
+                }
+                updateConfig(config.copy(serverUrl = server))
+                dialog.dismiss()
+                refreshAll()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun pair() {
+        val field = dialogField(
+            if (storage.readDisplayToken().isNullOrBlank()) "输入 10 分钟配对码或 Display Token" else "输入新的配对码以重新配对", "", true,
+        )
+        val note = "在 ${config.serverUrl.removePrefix("https://")} 登录后生成配对码。凭证由 Android Keystore 加密保存。"
+        val dialog = dialog("设备配对", note, field).setNegativeButton("取消", null).setPositiveButton("配对", null).create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(DialogInterface.BUTTON_POSITIVE)
+            positive.setOnClickListener {
+                val input = field.text.toString()
+                if (input.isBlank()) {
+                    field.error = "必须填写 Display Token 或配对码"
+                    return@setOnClickListener
+                }
+                positive.isEnabled = false
+                field.isEnabled = false
+                val server = config.serverUrl
+                executor.execute {
+                    val resolved = runCatching { client.resolveDisplayToken(server, input, storage.installationId(this)) }
+                    handler.post {
+                        resolved.onFailure { error ->
+                            field.error = error.message ?: "凭证验证失败"
+                            field.isEnabled = true
+                            positive.isEnabled = true
+                        }.onSuccess { token ->
+                            storage.writeDisplayToken(token)
+                            dialog.dismiss()
+                            nav = Nav()
+                            refreshPolicy.reset()
+                            refreshAll()
+                        }
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /* ------------------------------------------------------------------ window */
 
     private fun applyImmersiveMode() {
-        if (BuildConfig.KIOSK_MODE || config.immersiveMode) enterImmersiveMode() else exitImmersiveMode()
+        if (BuildConfig.KIOSK_MODE || config.immersiveMode) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.apply {
+                hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        }
     }
 
     private fun applyBrightness() {
-        window.attributes = window.attributes.apply {
-            screenBrightness = config.brightnessPercent / 100f
-        }
+        window.attributes = window.attributes.apply { screenBrightness = config.brightnessPercent / 100f }
     }
 
     private fun applyWindowBehavior() {
@@ -242,186 +395,10 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
     }
 
-    /** The console is the same web UI as u.80aj.com/app, opened with a read-only display token. */
-    private fun showConsole() {
-        val token = storage.readDisplayToken()
-        if (token.isNullOrBlank()) { setContentView(dashboardView); return }
-        val web = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            setBackgroundColor(Color.parseColor("#070910"))
-            webViewClient = object : WebViewClient() {
-                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                    if (request.isForMainFrame) handler.post { fallbackToNative("网页看板加载失败") }
-                }
-                @Deprecated("Deprecated in Java")
-                override fun onReceivedError(view: WebView, errorCode: Int, description: String?, failingUrl: String?) {
-                    handler.post { fallbackToNative("网页看板加载失败") }
-                }
-            }
-            setOnLongClickListener { showSettings(); true }
-            loadUrl("${config.serverUrl.trimEnd('/')}/app#token=${Uri.encode(token)}")
-        }
-        consoleView = web
-        consoleMode = true
-        setContentView(web)
-    }
-
-    private fun fallbackToNative(reason: String) {
-        if (!consoleMode) return
-        consoleMode = false
-        consoleView?.destroy()
-        consoleView = null
-        setContentView(dashboardView)
-        statusMessage = reason
-        render()
-        handler.post { scheduleRefresh(0L) }
-        Toast.makeText(this, reason + "，已切回原生看板", Toast.LENGTH_LONG).show()
-    }
-
-    private fun showSettings() {
-        val padding = dp(22)
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padding, dp(8), padding, 0)
-        }
-        val serverInput = EditText(this).apply {
-            hint = "https://u.80aj.com"
-            setText(config.serverUrl)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            contentDescription = "用量服务 HTTPS 地址"
-        }
-        val tokenInput = EditText(this).apply {
-            hint = if (storage.readDisplayToken().isNullOrBlank()) "输入 Display Token 或 10 分钟配对码" else "留空则不修改现有凭证"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            contentDescription = "UsageHub display token"
-        }
-        val brightnessLabel = label("屏幕亮度 ${config.brightnessPercent}%")
-        val brightness = SeekBar(this).apply {
-            max = 90
-            progress = config.brightnessPercent - 10
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    brightnessLabel.text = "屏幕亮度 ${progress + 10}%"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-                override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
-            })
-        }
-        val intervals = listOf(2, 5, 10)
-        val intervalSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                intervals.map { "每 $it 分钟取数" },
-            )
-            setSelection(intervals.indexOf(config.refreshMinutes).coerceAtLeast(0))
-        }
-        val showOnLockScreen = CheckBox(this).apply {
-            text = "锁屏前看板在前台时继续显示"
-            isChecked = config.showOnLockScreen
-        }
-        val keepScreenOn = CheckBox(this).apply {
-            text = "保持屏幕常亮"
-            isChecked = config.keepScreenOn
-        }
-        val immersiveMode = CheckBox(this).apply {
-            text = "全屏显示（隐藏系统导航键）"
-            isChecked = config.immersiveMode
-        }
-        val webConsole = CheckBox(this).apply {
-            text = "使用网页看板（与云端界面一致，长按可回到设置）"
-            isChecked = config.webConsole
-        }
-        layout.addView(label("服务地址"))
-        layout.addView(serverInput)
-        layout.addView(label("Display token · encrypted by Android Keystore"))
-        layout.addView(tokenInput)
-        layout.addView(brightnessLabel)
-        layout.addView(brightness)
-        layout.addView(intervalSpinner)
-        layout.addView(showOnLockScreen)
-        layout.addView(keepScreenOn)
-        layout.addView(immersiveMode)
-        layout.addView(webConsole)
-        val scroll = ScrollView(this).apply { addView(layout) }
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("UsageHub 设置")
-            .setView(scroll)
-            .setNeutralButton("系统设置") { _, _ -> startActivity(Intent(Settings.ACTION_SETTINGS)) }
-            .setNegativeButton("取消", null)
-            .setPositiveButton("保存", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
-                val server = serverInput.text.toString().trim().trimEnd('/')
-                val token = tokenInput.text.toString()
-                if (!isValidHttpsUrl(server)) {
-                    serverInput.error = "请输入有效的 HTTPS 地址"
-                    return@setOnClickListener
-                }
-                if (token.isBlank() && storage.readDisplayToken().isNullOrBlank()) {
-                    tokenInput.error = "必须填写 Display Token 或配对码"
-                    return@setOnClickListener
-                }
-                val newConfig = AppConfig(
-                    serverUrl = server,
-                    brightnessPercent = brightness.progress + 10,
-                    refreshMinutes = intervals[intervalSpinner.selectedItemPosition],
-                    displayMode = DisplayMode.USED,
-                    showOnLockScreen = showOnLockScreen.isChecked,
-                    keepScreenOn = keepScreenOn.isChecked,
-                    immersiveMode = immersiveMode.isChecked,
-                    webConsole = webConsole.isChecked,
-                )
-                dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = false
-                tokenInput.isEnabled = false
-                executor.execute {
-                    val resolved = runCatching {
-                        if (token.isBlank()) null else client.resolveDisplayToken(server, token, storage.installationId(this))
-                    }
-                    handler.post {
-                        resolved.onFailure { error ->
-                            tokenInput.error = error.message ?: "凭证验证失败"
-                            tokenInput.isEnabled = true
-                            dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = true
-                        }.onSuccess { displayToken ->
-                            storage.saveConfig(newConfig)
-                            if (displayToken != null) storage.writeDisplayToken(displayToken)
-                            config = newConfig
-                            refreshPolicy = RefreshPolicy(config.refreshMinutes * 60_000L)
-                            applyWindowBehavior()
-                            applyImmersiveMode()
-                            applyBrightness()
-                            statusMessage = "设置已保存"
-                            dialog.dismiss()
-                            recreate()
-                            scheduleRefresh(0L)
-                        }
-                    }
-                }
-            }
-        }
-        dialog.show()
-    }
-
     private fun isValidHttpsUrl(value: String): Boolean = runCatching {
         val url = URL(value)
         url.protocol == "https" && url.host.isNotBlank()
     }.getOrDefault(false)
 
-    private fun label(text: String): TextView = TextView(this).apply {
-        this.text = text
-        setTextColor(Color.DKGRAY)
-        textSize = 13f
-        setPadding(0, dp(8), 0, 0)
-    }
-
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private fun delayToNextMinute(nowMillis: Long = System.currentTimeMillis()): Long =
-        60_000L - nowMillis % 60_000L
-
 }

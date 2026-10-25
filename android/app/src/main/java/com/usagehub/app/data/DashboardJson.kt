@@ -1,4 +1,4 @@
-package com.usagehub.app
+package com.usagehub.app.data
 
 import org.json.JSONArray
 import org.json.JSONObject
@@ -49,6 +49,7 @@ object DashboardJson {
                         upstreamStale = item.optBoolean("stale", false) || incomplete,
                         windows = windows,
                         tokenUsage = tokenUsage,
+                        serverStale = item.optBoolean("stale", false),
                     ),
                 )
             }
@@ -75,7 +76,7 @@ object DashboardJson {
                             put("source", provider.source)
                             put("observedAt", instantOrNull(provider.observedAtMillis))
                             put("receivedAt", instantOrNull(provider.receivedAtMillis))
-                            put("stale", provider.upstreamStale)
+                            put("stale", provider.serverStale)
                             put("tokenUsage", encodeTokenUsage(provider.tokenUsage))
                             put(
                                 "windows",

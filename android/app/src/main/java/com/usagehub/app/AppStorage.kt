@@ -5,6 +5,10 @@ import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.usagehub.app.data.ConsoleRules
+import com.usagehub.app.data.DashboardJson
+import com.usagehub.app.data.DashboardSnapshot
+import com.usagehub.app.data.DisplayMode
 import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -20,7 +24,8 @@ data class AppConfig(
     val showOnLockScreen: Boolean,
     val keepScreenOn: Boolean,
     val immersiveMode: Boolean,
-    val webConsole: Boolean = true,
+    /** Quota older than this shows as 「数据过期」 (device-side rule; see ConsoleRules.status). */
+    val quotaStaleMinutes: Int = ConsoleRules.DEFAULT_QUOTA_STALE_MINUTES,
 )
 
 class AppStorage(private val context: Context) {
@@ -36,7 +41,8 @@ class AppStorage(private val context: Context) {
         showOnLockScreen = preferences.getBoolean("show_on_lock_screen", true),
         keepScreenOn = preferences.getBoolean("keep_screen_on", false),
         immersiveMode = preferences.getBoolean("immersive_mode", true),
-        webConsole = preferences.getBoolean("web_console", true),
+        quotaStaleMinutes = preferences.getInt("quota_stale_minutes", ConsoleRules.DEFAULT_QUOTA_STALE_MINUTES)
+            .takeIf { it in ConsoleRules.QUOTA_STALE_OPTIONS } ?: ConsoleRules.DEFAULT_QUOTA_STALE_MINUTES,
     )
 
     fun saveConfig(config: AppConfig) {
@@ -48,7 +54,9 @@ class AppStorage(private val context: Context) {
             .putBoolean("show_on_lock_screen", config.showOnLockScreen)
             .putBoolean("keep_screen_on", config.keepScreenOn)
             .putBoolean("immersive_mode", config.immersiveMode)
-            .putBoolean("web_console", config.webConsole)
+            .putInt("quota_stale_minutes", config.quotaStaleMinutes)
+            // Leftover of the removed WebView console (0.1.7): drop the flag instead of carrying it forward.
+            .remove("web_console")
             .apply()
     }
 
@@ -64,6 +72,32 @@ class AppStorage(private val context: Context) {
     fun writeCache(snapshot: DashboardSnapshot) {
         preferences.edit().putString("dashboard_cache", DashboardJson.encode(snapshot)).apply()
     }
+
+    private val jsonDir: File get() = File(context.filesDir, "json-cache")
+
+    /** Last successful raw response per request key, so the dashboard can render offline. */
+    fun writeJson(key: String, raw: String) {
+        runCatching {
+            jsonDir.mkdirs()
+            val target = File(jsonDir, "${safeName(key)}.json")
+            val temp = File(jsonDir, "${safeName(key)}.tmp")
+            temp.writeText(raw, Charsets.UTF_8)
+            if (!temp.renameTo(target)) temp.delete()
+        }
+    }
+
+    fun readJson(key: String): String? =
+        runCatching { File(jsonDir, "${safeName(key)}.json").takeIf { it.isFile }?.readText(Charsets.UTF_8) }.getOrNull()
+
+    fun cacheBytes(): Long =
+        (jsonDir.listFiles()?.sumOf { it.length() } ?: 0L) + (preferences.getString("dashboard_cache", null)?.length?.toLong() ?: 0L)
+
+    fun clearCache() {
+        jsonDir.listFiles()?.forEach { it.delete() }
+        preferences.edit().remove("dashboard_cache").apply()
+    }
+
+    private fun safeName(key: String): String = key.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     fun readDisplayName(): String = preferences.getString("display_name", "UsageHub") ?: "UsageHub"
 
