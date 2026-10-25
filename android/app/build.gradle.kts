@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 版本号只有一个可信来源：git tag（v0.1.6）。CI 用 -P 传进来，本地裸构建才回落到下面的默认值。
+// 默认值请与「最近一次已发布的 Release」保持一致，避免本地产物的版本号跑到线上前面。
+val appVersionName: String = providers.gradleProperty("usagehubVersionName").orNull ?: "0.1.6"
+val appVersionCode: Int = providers.gradleProperty("usagehubVersionCode").orNull?.toIntOrNull() ?: 106
+
 android {
     namespace = "com.usagehub.app"
     compileSdk = 36
@@ -11,8 +16,8 @@ android {
         applicationId = "com.usagehub.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.4"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "android.app.Instrumentation"
     }

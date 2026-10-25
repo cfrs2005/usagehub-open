@@ -37,17 +37,40 @@ jobs:
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
+      - name: Derive version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must look like v<major>.<minor>.<patch>, got '$tag'" >&2
+            exit 1
+          fi
+          # 0.1.6 -> 106，保证单调递增且远大于历史硬编码的 4
+          IFS=. read -r major minor patch <<< "$version"
+          code=$(( 10#$major * 10000 + 10#$minor * 100 + 10#$patch ))
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Resolved versionName=$version versionCode=$code from $tag"
       - name: Build signed standard APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
         run: |
           umask 077
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/usagehub-release.jks"
-          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/usagehub-release.jks" ./gradlew testStandardReleaseUnitTest lintStandardRelease assembleStandardRelease --no-daemon --stacktrace
+          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/usagehub-release.jks" ./gradlew testStandardReleaseUnitTest lintStandardRelease assembleStandardRelease --no-daemon --stacktrace \
+            -PusagehubVersionName="$VERSION_NAME" -PusagehubVersionCode="$VERSION_CODE"
           apk="app/build/outputs/apk/standard/release/app-standard-release.apk"
+          aapt="$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt"
+          "$aapt" dump badging "$apk" | tee "${apk%/*}/BADGING.txt"
+          # 版本号必须与 tag 一致，否则直接失败，避免再出现「Release 叫 vX、APK 里还是旧版本」
+          grep -F "versionCode='$VERSION_CODE'" "${apk%/*}/BADGING.txt"
+          grep -F "versionName='$VERSION_NAME'" "${apk%/*}/BADGING.txt"
           "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee "${apk%/*}/APKSIGNER.txt"
           sha256sum "$apk" > "${apk%/*}/SHA256SUMS"
       - name: Publish GitHub Release

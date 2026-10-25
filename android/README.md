@@ -24,4 +24,17 @@ The checked-in Gradle wrapper requires Java 17.
 
 The output APKs are under `app/build/outputs/apk/standard/debug/` and `app/build/outputs/apk/kiosk/debug/`.
 
+## Versioning
+
+`versionName` and `versionCode` are not edited by hand. The `v<major>.<minor>.<patch>` tag is the single
+source of truth: `.github/workflows/android-release.yml` derives them (`v0.1.6` → `versionName 0.1.6`,
+`versionCode 106`), passes them to Gradle as `-PusagehubVersionName` / `-PusagehubVersionCode`, and then fails
+the build if `aapt dump badging` reports anything else. A bare local build falls back to the last released
+version declared in `app/build.gradle.kts`.
+
+```bash
+# Reproduce a tagged release locally (unsigned without a keystore on purpose)
+./gradlew assembleStandardRelease -PusagehubVersionName=0.1.6 -PusagehubVersionCode=106 --no-daemon
+```
+
 Main-branch CI also produces `app-standard-release.apk` with the repository's protected signing key. Install that artifact for stable in-place upgrades; Debug artifacts are not an upgrade channel.
