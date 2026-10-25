@@ -46,6 +46,18 @@ object Fmt {
         }.format(value)
     }
 
+    const val NO_PRICE = "无价格"
+
+    /** AGENTS.md: zero cost with non-zero tokens means the price table lacks the model, not that it was free. */
+    fun unpriced(cost: Double?, tokens: Double?): Boolean = cost != null && cost <= 0.0 && (tokens ?: 0.0) > 0.0
+
+    fun unpriced(cost: Double?, tokens: Long?): Boolean = unpriced(cost, tokens?.toDouble())
+
+    /** [money], except an unpriced value is — (the caller adds the [NO_PRICE] note where it has room). */
+    fun cost(value: Double?, tokens: Double?): String = if (unpriced(value, tokens)) NONE else money(value)
+
+    fun cost(value: Double?, tokens: Long?): String = cost(value, tokens?.toDouble())
+
     fun pct(value: Double?): String = value?.let { "${Math.round(it.coerceIn(0.0, 100.0))}%" } ?: "--"
 
     /** Time left until a quota resets: `2天14小时`, `3小时05分`, `等待重置` once passed, `--` when unknown. */
@@ -73,11 +85,13 @@ object Fmt {
         return if (day == today) hm(millis, zone) else fmt(millis, zone, short)
     }
 
-    /** `10/18/2026 - 10/24/2026`: the server's range when we have one, otherwise the requested one. */
+    /**
+     * `10/19/2026 - 10/25/2026`: the server's range when we have one, otherwise the requested one. Ranges are calendar
+     * dates keyed at 00:00 UTC (ConsoleRules.dayRange), so both ends are printed in UTC.
+     */
     fun range(days: Int, data: AnalyticsData?, nowMillis: Long, zone: ZoneId): String {
-        val to = data?.let { it.to * 1000L } ?: nowMillis
-        val from = data?.let { it.from * 1000L } ?: (to - (days - 1) * ConsoleRules.DAY * 1000L)
-        return "${date(from, zone)} - ${date(to, zone)}"
+        val (from, to) = data?.let { it.from to it.to } ?: ConsoleRules.dayRange(days, nowMillis, zone)
+        return "${date(from * 1000L, java.time.ZoneOffset.UTC)} - ${date(to * 1000L, java.time.ZoneOffset.UTC)}"
     }
 
     /** 0..top split into [count] round steps (1 / 2 / 2.5 / 5 × 10^k), never finer than 1 (axes show integers). */

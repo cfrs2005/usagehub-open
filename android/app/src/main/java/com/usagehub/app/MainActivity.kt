@@ -173,6 +173,8 @@ class MainActivity : Activity() {
                 val (week, day) = boundaries()
                 hub.baseline("week", week, source)
                 hub.baseline("day", day, source)
+                hub.modelHistory("claude", week, source, now)
+                hub.modelHistory("codex", week, source, now)
             }
             else -> Unit
         }
@@ -201,7 +203,7 @@ class MainActivity : Activity() {
             dashboard = hub.dashboard,
             analytics = HashMap(hub.analytics),
             history = detail?.let { hub.history(it, nav.detailDays, nav.recordLimit) },
-            modelRows = hub.modelRows(week, day, nav.modelQuery),
+            modelTables = hub.modelTables(week, day, nav.modelQuery),
             offline = hub.offline,
             lastSuccessMillis = hub.lastSuccessMillis,
             paired = !storage.readDisplayToken().isNullOrBlank(),

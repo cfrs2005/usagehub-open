@@ -27,7 +27,8 @@ private fun ink(provider: String): Ink = if (provider == "codex") {
 
 object Charts {
     private const val TICK_SIZE = 10.5f
-    private val zone: ZoneId get() = ZoneId.systemDefault()
+    /** Day slots start on the collector's date at 00:00 UTC (see ConsoleRules.dayRange), so they are labelled in UTC. */
+    private val zone: ZoneId = java.time.ZoneOffset.UTC
 
     private class Frame(val left: Float, val right: Float, val top: Float, val bottom: Float) {
         val width get() = right - left

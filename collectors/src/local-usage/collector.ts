@@ -94,8 +94,13 @@ function modelUsage(rows: UnknownRecord[]): Array<{ model: string; tokens: numbe
       const model = typeof (entry.modelName ?? entry.model ?? entry.name) === "string" ? String(entry.modelName ?? entry.model ?? entry.name) : "";
       if (!model) continue;
       try {
-        const tokens = entry.totalTokens ?? ((Number(entry.inputTokens) || 0) + (Number(entry.outputTokens) || 0));
-        const cost = entry.costUSD ?? entry.costUsd ?? entry.totalCost ?? 0;
+        // ccusage's Claude modelBreakdowns carry no totalTokens; the row total counts cache creation and cache reads,
+        // so the per-model figure must too or model columns would be ~1% of the provider total.
+        const tokens = entry.totalTokens ?? (
+          (Number(entry.inputTokens) || 0) + (Number(entry.outputTokens) || 0)
+          + (Number(entry.cacheCreationTokens) || 0) + (Number(entry.cacheReadTokens) || 0)
+        );
+        const cost = entry.costUSD ?? entry.costUsd ?? entry.totalCost ?? entry.cost ?? 0;
         const current = totals.get(model) ?? { tokens: 0, costUsd: 0 };
         current.tokens += nonNegativeInteger(tokens, "model tokens");
         current.costUsd += nonNegativeMoney(cost, "model cost");
@@ -106,14 +111,21 @@ function modelUsage(rows: UnknownRecord[]): Array<{ model: string; tokens: numbe
   return [...totals.entries()].map(([model, value]) => ({ model, tokens: value.tokens, costUsd: Math.round(value.costUsd * 1_000_000) / 1_000_000 }));
 }
 
-function requireClaudeCostCoverage(result: LocalUsageResult): LocalUsageResult {
-  if (result.provider !== "claude") return result;
+/**
+ * AGENTS.md: never publish a zero price when token usage is non-zero. A day (or today / the total) with tokens but no
+ * cost means the price table does not cover a model yet; the whole read is rejected so the caller keeps the last valid
+ * snapshot instead of uploading $0. Applies to both providers.
+ */
+function requireCostCoverage(result: LocalUsageResult): LocalUsageResult {
+  const label = result.provider === "claude" ? "Claude" : "Codex";
   if ((result.today_tokens ?? 0) > 0 && (result.today_cost_usd ?? 0) <= 0) {
-    throw new Error("Claude price coverage is missing for today's models");
+    throw new Error(`${label} price coverage is missing for today's models`);
   }
   if ((result.total_tokens ?? 0) > 0 && (result.total_cost_usd ?? 0) <= 0) {
-    throw new Error("Claude price coverage is missing for historical models");
+    throw new Error(`${label} price coverage is missing for historical models`);
   }
+  const unpriced = (result.daily_usage ?? []).find((day) => day.tokens > 0 && day.costUsd <= 0);
+  if (unpriced) throw new Error(`${label} price coverage is missing for ${unpriced.date}`);
   return result;
 }
 
@@ -259,31 +271,42 @@ export class LocalUsageCollector {
       const sourcePath = this.#options.sourceFiles[provider];
       if (!sourcePath) throw new Error("no configured usage JSON source");
       const source = this.#options.sourceReader(sourcePath);
-      const result = requireClaudeCostCoverage(projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs, timeZone));
+      const result = requireCostCoverage(projectDashboardFile(provider, JSON.parse(source.text) as unknown, now, source.modifiedAtMs, timeZone));
       this.#writeCache(provider, { cachedAt: now, result });
       return result;
     } catch {
-      const [command, args] = provider === "claude"
-        ? ["ccusage", ["daily", "--json", "--no-color", "--by-agent", "--timezone", timeZone]]
-        : ["ccusage-codex", ["daily", "--json", "--offline", "--noColor", "--locale", "en-US", "--timezone", timeZone]];
-      try {
-        const stdout = await this.#options.runner(command, args, this.#options.timeoutMs);
-        const result = requireClaudeCostCoverage(projectCliOutput(provider, JSON.parse(stdout) as unknown, now, timeZone));
-        this.#writeCache(provider, { cachedAt: now, result });
-        return result;
-      } catch (error) {
-        const reason = `${command}: ${(error as Error).message}`.replace(/\s+/g, " ").slice(0, 300);
-        if (cached) return { ...cached.result, cached: true, stale: true, error: reason };
-        return {
-          error: reason,
-          provider,
-          source: sourceFor(provider),
-          quota_semantics: "not_official_remaining_quota",
-          status: "unavailable",
-          observed_at: new Date(now).toISOString(),
-          cost_label: COST_LABEL,
-        };
+      // Both tools refresh their price table online. The bundled offline Codex table lags new models (it priced
+      // gpt-6-astra / gpt-6.1-sol at $0), so it is only a fallback when the online read fails, and its result still
+      // has to pass the same zero-price check.
+      const command = provider === "claude" ? "ccusage" : "ccusage-codex";
+      const attempts = provider === "claude"
+        ? [["daily", "--json", "--no-color", "--by-agent", "--timezone", timeZone]]
+        : [
+            ["daily", "--json", "--noColor", "--locale", "en-US", "--timezone", timeZone],
+            ["daily", "--json", "--offline", "--noColor", "--locale", "en-US", "--timezone", timeZone],
+          ];
+      const failures: string[] = [];
+      for (const args of attempts) {
+        try {
+          const stdout = await this.#options.runner(command, args, this.#options.timeoutMs);
+          const result = requireCostCoverage(projectCliOutput(provider, JSON.parse(stdout) as unknown, now, timeZone));
+          this.#writeCache(provider, { cachedAt: now, result });
+          return result;
+        } catch (error) {
+          failures.push(`${args.includes("--offline") ? "offline: " : ""}${(error as Error).message}`);
+        }
       }
+      const reason = `${command}: ${failures.join("; ")}`.replace(/\s+/g, " ").slice(0, 300);
+      if (cached) return { ...cached.result, cached: true, stale: true, error: reason };
+      return {
+        error: reason,
+        provider,
+        source: sourceFor(provider),
+        quota_semantics: "not_official_remaining_quota",
+        status: "unavailable",
+        observed_at: new Date(now).toISOString(),
+        cost_label: COST_LABEL,
+      };
     }
   }
 

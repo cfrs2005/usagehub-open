@@ -291,20 +291,27 @@ object Widgets {
         g.stroke(rect, radius, 0x17FFFFFF)
     }
 
+    /**
+     * Opaque, unfiltered paint for the avatar. Drawing the photo with the shared [Gfx.fill] inherited the 0x24 alpha of
+     * the glow circle drawn just before, so the photo showed at ~14% opacity over the red glow (v0.1.8 bug).
+     */
+    private val photo = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
     fun avatar(g: Gfx, bitmap: Bitmap?, name: String, cx: Float, cy: Float, diameter: Float) {
         val r = diameter / 2
         val rect = RectF(cx - r, cy - r, cx + r, cy + r)
+        // Glow ring behind the photo only; the photo is drawn opaque on top, so only the 1.5 px rim and the glow show.
         g.circle(cx, cy, r + 1.5f, 0x24FFFFFF, glow = alpha(Palette.RED, 0.45f), glowRadius = 8f)
         if (bitmap != null) {
             g.canvas.save()
             g.canvas.clipPath(Path().apply { addCircle(cx, cy, r, Path.Direction.CW) })
             val side = minOf(bitmap.width, bitmap.height)
             val src = android.graphics.Rect((bitmap.width - side) / 2, (bitmap.height - side) / 2, (bitmap.width + side) / 2, (bitmap.height + side) / 2)
-            g.fill.isFilterBitmap = true
-            g.canvas.drawBitmap(bitmap, src, rect, g.fill)
+            g.canvas.drawBitmap(bitmap, src, rect, photo)
             g.canvas.restore()
         } else {
             g.fill.shader = LinearGradient(rect.left, rect.top, rect.right, rect.bottom, 0xFFFF4A55.toInt(), Palette.BLUE, Shader.TileMode.CLAMP)
+            g.fill.color = 0xFFFFFFFF.toInt()
             g.canvas.drawCircle(cx, cy, r, g.fill)
             g.fill.shader = null
             val initial = name.trim().firstOrNull()?.uppercase() ?: "U"

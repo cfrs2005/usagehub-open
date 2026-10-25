@@ -117,7 +117,9 @@ test("Claude refreshes pricing online, isolates the Claude agent, and rejects a 
           totalTokens: 999,
           totalCost: 999,
           agents: [
-            { agent: "claude", totalTokens: 42, totalCost: price },
+            { agent: "claude", totalTokens: 42, totalCost: price, modelBreakdowns: [
+              { modelName: "claude-opus-5-5", inputTokens: 2, outputTokens: 10, cacheCreationTokens: 5, cacheReadTokens: 25, cost: price },
+            ] },
             { agent: "codex", totalTokens: 957, totalCost: 997.5 },
           ],
         }],
@@ -132,12 +134,58 @@ test("Claude refreshes pricing online, isolates the Claude agent, and rejects a 
     assert.equal(valid.total_tokens, 42);
     assert.equal(valid.today_cost_usd, 1.5);
     assert.equal(valid.total_cost_usd, 1.5);
+    // Per-model tokens include cache tokens, so they add up to the provider total.
+    assert.deepEqual(valid.model_usage, [{ model: "claude-opus-5-5", tokens: 42, costUsd: 1.5 }]);
 
     price = 0;
     const rejected = await collector.collect("claude", true);
     assert.equal(rejected.cached, true);
     assert.equal(rejected.stale, true);
     assert.equal(rejected.total_cost_usd, 1.5);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("Codex prices online, falls back to offline, and never publishes $0 for non-zero tokens", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "usagehub-local-codex-pricing-"));
+  const calls: string[][] = [];
+  let online: "ok" | "fail" | "zero" = "ok";
+  const daily = (todayCost: number, pastCost: number) => JSON.stringify({ daily: [
+    { date: "Oct 24, 2026", totalTokens: 215_905_500, costUSD: pastCost, models: { "gpt-6-astra": { totalTokens: 215_905_500 } } },
+    { date: "Oct 25, 2026", totalTokens: 15_453_948, costUSD: todayCost, models: { "gpt-6.1-sol": { totalTokens: 15_453_948 } } },
+  ] });
+  const collector = new LocalUsageCollector({
+    stateDir,
+    now: () => Date.parse("2026-10-25T04:50:00.000Z"),
+    sourceFiles: {},
+    sourceReader: () => { throw new Error("missing file"); },
+    runner: async (command, args) => {
+      assert.equal(command, "ccusage-codex");
+      calls.push(args);
+      if (args.includes("--offline")) return daily(0, 0); // stale bundled table: new models priced at $0
+      if (online === "fail") throw new Error("fetch failed");
+      return online === "zero" ? daily(0, 195.29) : daily(3.095408, 195.292218);
+    },
+  });
+  try {
+    const priced = await collector.collect("codex", true);
+    assert.equal(calls[0]?.includes("--offline"), false);
+    assert.equal(calls.length, 1);
+    assert.equal(priced.today_cost_usd, 3.095408);
+    assert.equal(priced.total_cost_usd, 198.387626);
+
+    online = "fail";
+    const kept = await collector.collect("codex", true);
+    assert.equal(calls.at(-1)?.includes("--offline"), true);
+    assert.equal(kept.stale, true);
+    assert.equal(kept.today_cost_usd, 3.095408);
+    assert.match(kept.error ?? "", /fetch failed; offline: Codex price coverage is missing/);
+
+    online = "zero";
+    const zero = await collector.collect("codex", true);
+    assert.equal(zero.stale, true);
+    assert.equal(zero.today_cost_usd, 3.095408);
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
   }

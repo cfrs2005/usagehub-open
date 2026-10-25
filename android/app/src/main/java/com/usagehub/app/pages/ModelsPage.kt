@@ -2,6 +2,7 @@ package com.usagehub.app.pages
 
 import android.graphics.Paint
 import android.graphics.RectF
+import com.usagehub.app.data.ConsoleRules
 import com.usagehub.app.data.Fmt
 import com.usagehub.app.ui.Accent
 import com.usagehub.app.ui.Action
@@ -52,7 +53,14 @@ object ModelsPage {
         val accent = Accent.of(name)
         Widgets.neonCard(g, c, accent)
         Widgets.logo(g, name, c.left + 14f, c.top + 9f, 24f)
-        g.textMid(if (name == "claude") "Claude" else "Codex", c.left + 47f, c.top + 21f, 19f, 0xFFFFFFFF.toInt(), 800)
+        val titleW = g.textMid(if (name == "claude") "Claude" else "Codex", c.left + 47f, c.top + 21f, 19f, 0xFFFFFFFF.toInt(), 800)
+        val table = ctx.s.modelTables[name]
+        // Where the 今日 / 7天 deltas really start when no snapshot sits at the boundary (sparse uploads).
+        table?.let { ConsoleRules.coverageNote(it, ctx.zone) }?.let { note ->
+            val room = c.right - 14f - (c.left + 47f + titleW + 12f)
+            val size = g.fit(note, room, 10f, 8.5f, 400, tnum = true) ?: 8.5f
+            g.textMid(g.ellipsize(note, room, size), c.right - 14f, c.top + 21f, size, Palette.DIM, 400, Paint.Align.RIGHT, tnum = true)
+        }
 
         val wide = c.width() > 400f
         val pad = 14f
@@ -77,7 +85,7 @@ object ModelsPage {
         g.vline(status - 5f, head.top + 5f, head.bottom - 5f, 0x1FFFFFFF)
         g.textMid("状态", status, hy, 11f, Palette.MUTED)
 
-        val rows = ctx.s.modelRows[name].orEmpty()
+        val rows = table?.rows.orEmpty()
         val bodyTop = head.bottom
         val available = c.bottom - 4f - bodyTop
         if (rows.isEmpty()) {

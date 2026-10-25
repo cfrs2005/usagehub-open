@@ -78,8 +78,8 @@ object SettingsPage {
             "数据来源" to source(provider),
             "配额更新" to (provider?.observedAtMillis?.let { Fmt.stamp(it, ctx.zone) } ?: "从未"),
             "Token 更新" to (provider?.tokenUsage?.observedAtMillis?.let { Fmt.stamp(it, ctx.zone) } ?: "从未"),
-            "5 小时窗口" to window(five?.usedPercent, five?.resetsAtEpochSeconds, now),
-            "7 天窗口" to window(week?.usedPercent, week?.resetsAtEpochSeconds, now),
+            "5 小时窗口" to window(five?.usedPercent, five?.resetsAtEpochSeconds, now, HomePage.windowMissing(name, 300)),
+            "7 天窗口" to window(week?.usedPercent, week?.resetsAtEpochSeconds, now, HomePage.windowMissing(name, 10_080)),
         )
         val info = ConsoleRules.updated(provider, now, ctx.quotaStaleMillis)
         val oldQuota = info.quotaOld
@@ -114,8 +114,8 @@ object SettingsPage {
         return quota + tokens
     }
 
-    private fun window(percent: Double?, resetsAt: Long?, now: Long): String {
-        if (percent == null) return "--"
+    private fun window(percent: Double?, resetsAt: Long?, now: Long, missing: String): String {
+        if (percent == null) return missing
         return if (resetsAt == null) Fmt.pct(percent) else "${Fmt.pct(percent)} · 还剩 ${Fmt.remain(resetsAt, now)}"
     }
 

@@ -7,7 +7,7 @@ import com.usagehub.app.data.AnalyticsData
 import com.usagehub.app.data.DashboardSnapshot
 import com.usagehub.app.data.DeviceDiagnostics
 import com.usagehub.app.data.HistoryData
-import com.usagehub.app.data.ModelRow
+import com.usagehub.app.data.ModelTable
 
 enum class Tab(val label: String, val icon: Icon, val key: String) {
     HOME("首页", Icon.HOME, "home"),
@@ -66,7 +66,7 @@ data class Screen(
     val dashboard: DashboardSnapshot?,
     val analytics: Map<Int, AnalyticsData>,
     val history: HistoryData?,
-    val modelRows: Map<String, List<ModelRow>>,
+    val modelTables: Map<String, ModelTable>,
     val offline: Boolean,
     val lastSuccessMillis: Long?,
     val paired: Boolean,

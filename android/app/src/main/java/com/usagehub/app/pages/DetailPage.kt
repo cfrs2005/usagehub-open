@@ -36,8 +36,8 @@ object DetailPage {
         val stats = listOf(
             Stat("累计 Token", Fmt.compact(usage?.totalTokens)),
             Stat("今日 Token", Fmt.full(usage?.todayTokens), fallback = Fmt.compact(usage?.todayTokens)),
-            Stat("累计费用", Fmt.money(usage?.totalCostUsd), ValueTone.RED),
-            Stat("今日费用", Fmt.money(usage?.todayCostUsd)),
+            StatRow.cost("累计费用", usage?.totalCostUsd, usage?.totalTokens, ValueTone.RED),
+            StatRow.cost("今日费用", usage?.todayCostUsd, usage?.todayTokens),
             Stat("额度重置", Fmt.remain(UsageLogic.quotaWindow(current, 10_080)?.resetsAtEpochSeconds, now)),
         )
         val boxLeft = Layout.LEFT + 86f
@@ -46,8 +46,10 @@ object DetailPage {
         stats.forEachIndexed { index, stat ->
             val box = RectF(x, top, x + fitted.widths[index], bottom)
             if (index == 2) Widgets.neonCard(g, box, accent, soft = true, radius = 9f) else detailBox(g, box)
-            if (index == 2) cents(g, fitted.texts[index], box.left + 12f, box.top + 37f, fitted.size, stat.tone)
-            else StatRow.text(g, stat, fitted.texts[index], box.left + 12f, box.top + 37f, fitted.size)
+            if (index == 2) {
+                cents(g, fitted.texts[index], box.left + 12f, box.top + 37f, fitted.size, stat.tone)
+                StatRow.note(g, stat, fitted.texts[index], box.left + 12f, box.top + 37f, fitted.size)
+            } else StatRow.text(g, stat, fitted.texts[index], box.left + 12f, box.top + 37f, fitted.size)
             g.text(stat.label, box.left + 12f, box.top + 58f, 11.5f, Palette.MUTED, 400)
             x += fitted.widths[index] + 8f
         }
@@ -145,15 +147,17 @@ object DetailPage {
             if (top > body.bottom || top + rowH < body.top) return@forEachIndexed
             val cy = top + rowH / 2
             g.hline(c.left + 1f, c.right - 1f, top, 0x12FFFFFF)
+            // Token columns are compact (307.86M, 17.66B): full digits of 10^8–10^11 do not fit a quarter-width column.
             val cells = listOf(
                 Fmt.shortStamp(item.observedAt, ctx.zone),
-                Fmt.full(item.todayTokens),
+                Fmt.compact(item.todayTokens),
                 Fmt.compact(item.totalTokens),
-                Fmt.money(item.todayCostUsd),
+                if (Fmt.unpriced(item.todayCostUsd, item.todayTokens)) "${Fmt.NONE} ${Fmt.NO_PRICE}" else Fmt.money(item.todayCostUsd),
             )
             cells.forEachIndexed { i, text ->
                 val maxW = colX[i + 1] - colX[i] - 6f
-                g.textMid(g.ellipsize(text, maxW, 11.5f), colX[i], cy, 11.5f, if (i == 0) 0xFFC7CEDE.toInt() else 0xFFE6EAF2.toInt(), 400, tnum = true)
+                val size = g.fit(text, maxW, 11.5f, 9.5f, 400) ?: 9.5f
+                g.textMid(g.ellipsize(text, maxW, size), colX[i], cy, size, if (i == 0) 0xFFC7CEDE.toInt() else 0xFFE6EAF2.toInt(), 400, tnum = true)
             }
             Widgets.status(g, colX[4], cy, "成功", Tone.OK, 11f)
         }

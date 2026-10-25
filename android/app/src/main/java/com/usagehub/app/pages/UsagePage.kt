@@ -61,9 +61,9 @@ object UsagePage {
             val usage = current?.tokenUsage
             val week = UsageLogic.quotaWindow(current, 10_080)
             val stats = listOf(
-                Stat("累计费用", Fmt.money(usage?.totalCostUsd ?: data?.provider(name)?.latest?.totalCostUsd)),
+                StatRow.cost("累计费用", usage?.totalCostUsd ?: data?.provider(name)?.latest?.totalCostUsd, usage?.totalTokens),
                 Stat("今日 Token", Fmt.full(usage?.todayTokens), if (name == "codex") ValueTone.CYAN else ValueTone.WHITE, Fmt.compact(usage?.todayTokens)),
-                Stat("今日费用", Fmt.money(usage?.todayCostUsd)),
+                StatRow.cost("今日费用", usage?.todayCostUsd, usage?.todayTokens),
                 Stat("额度重置", Fmt.remain(week?.resetsAtEpochSeconds, UsageLogic.effectiveNow(s.now, s.dashboard))),
             )
             g.hline(c.left + 12f, c.right - 12f, c.bottom - 55f, 0x17FFFFFF)

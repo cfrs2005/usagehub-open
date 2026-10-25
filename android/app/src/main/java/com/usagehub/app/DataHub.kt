@@ -10,7 +10,7 @@ import com.usagehub.app.data.DashboardClient
 import com.usagehub.app.data.FetchResult
 import com.usagehub.app.data.DashboardSnapshot
 import com.usagehub.app.data.HistoryData
-import com.usagehub.app.data.ModelRow
+import com.usagehub.app.data.ModelTable
 import java.util.concurrent.ExecutorService
 
 /** Where requests go: the paired server, or (debug builds only) the fixture. */
@@ -55,6 +55,7 @@ class DataHub(
     val analytics = HashMap<Int, AnalyticsData>()
     private val histories = HashMap<String, HistoryData>()
     private val baselines = HashMap<String, AnalyticsData>()
+    private val modelHistories = HashMap<String, Pair<Long, HistoryData>>()
     private val versions = HashMap<String, Int>()
     private var counter = 0
 
@@ -91,8 +92,8 @@ class DataHub(
     }
 
     fun analytics(days: Int, source: Source, now: Long) {
-        val to = now / 1000
-        load("analytics-$days", "/v1/analytics?from=${to - (days - 1) * ConsoleRules.DAY}&to=$to&bucket=day", source, AnalyticsJson::parse) {
+        val (from, to) = ConsoleRules.dayRange(days, now, java.time.ZoneId.systemDefault())
+        load("analytics-$days", "/v1/analytics?from=$from&to=$to&bucket=day", source, AnalyticsJson::parse) {
             analytics[days] = it
         }
     }
@@ -115,15 +116,29 @@ class DataHub(
         }
     }
 
-    fun modelRows(weekBoundary: Long, dayBoundary: Long, query: String): Map<String, List<ModelRow>> {
+    /**
+     * Uploads inside the 7-day window (newest 100, newest first): the fallback start of both delta columns when no
+     * snapshot sits at a boundary. Keyed by the window start so a new day never reuses yesterday's list.
+     */
+    fun modelHistory(provider: String, weekBoundary: Long, source: Source, now: Long) {
+        val key = "models-$provider"
+        load(key, "/v1/history?provider=$provider&from=$weekBoundary&to=${now / 1000}&limit=100", source, { raw -> weekBoundary to AnalyticsJson.parseHistory(raw) }, accept = { it.first == weekBoundary }) {
+            modelHistories[key] = it
+        }
+    }
+
+    fun modelTables(weekBoundary: Long, dayBoundary: Long, query: String): Map<String, ModelTable> {
         val current = analytics[7] ?: return emptyMap()
         val week = baselines["baseline-week"]?.takeIf { it.to == weekBoundary }
         val day = baselines["baseline-day"]?.takeIf { it.to == dayBoundary }
         return listOf("claude", "codex").associateWith { name ->
-            ConsoleRules.modelRows(
+            val now = ConsoleRules.snapAt(current, name)
+            val full = now?.full ?: true
+            val uploads = modelHistories["models-$name"]?.takeIf { it.first == weekBoundary }?.second?.tokenItems.orEmpty()
+            ConsoleRules.modelTable(
                 current.provider(name)?.models.orEmpty(),
-                ConsoleRules.baseline(week, name, weekBoundary, 12 * 3600L),
-                ConsoleRules.baseline(day, name, dayBoundary, 3600L),
+                ConsoleRules.windowStart(weekBoundary, ConsoleRules.snapAt(week, name), uploads, now?.at, 12 * 3600L, full),
+                ConsoleRules.windowStart(dayBoundary, ConsoleRules.snapAt(day, name), uploads, now?.at, 3600L, full),
                 query,
             )
         }

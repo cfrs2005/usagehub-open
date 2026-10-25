@@ -29,12 +29,30 @@ data class TokenItem(
     val totalTokens: Double,
     val todayCostUsd: Double,
     val totalCostUsd: Double,
+    /** Cumulative per-model totals carried by this upload (empty for uploads made before model_usage existed). */
+    val models: List<ModelUsage> = emptyList(),
 )
 
 data class HistoryData(val tokenItems: List<TokenItem>)
 
 /** A row of the models table. `null` means "not knowable from the data we have" and is drawn as —. */
 data class ModelRow(val model: String, val today: Double?, val week: Double?, val share: Double?)
+
+/**
+ * Cumulative per-model totals at one upload time (epoch seconds). [full] = the models add up to the provider total.
+ * Collectors before v0.1.9 counted only input+output per Claude model (~1% of the total); such a snapshot must never be
+ * subtracted from a full one, or the delta would be the whole history.
+ */
+data class ModelSnap(val at: Long, val models: Map<String, Double>, val full: Boolean = true)
+
+/**
+ * The snapshot a window's delta is measured from. [exact] = it sits at the window boundary (within tolerance), so the
+ * delta covers the whole window; otherwise the delta only covers [snap].at..now and the page says so.
+ */
+data class WindowStart(val snap: ModelSnap, val exact: Boolean)
+
+/** One vendor's models table plus where its two delta columns actually start. */
+data class ModelTable(val rows: List<ModelRow>, val today: WindowStart?, val week: WindowStart?)
 
 object AnalyticsJson {
     fun parse(raw: String): AnalyticsData {
@@ -85,6 +103,10 @@ object AnalyticsJson {
                     totalTokens = number(item, "totalTokens"),
                     todayCostUsd = number(item, "todayCostUsd"),
                     totalCostUsd = number(item, "totalCostUsd"),
+                    models = objects(item.optJSONArray("modelUsage")).mapNotNull { model ->
+                        val id = model.optString("model").trim()
+                        if (id.isBlank()) null else ModelUsage(id, number(model, "tokens"), number(model, "costUsd"))
+                    },
                 )
             }.sortedByDescending { it.observedAt },
         )
@@ -154,15 +176,40 @@ object ConsoleRules {
     }
 
     /**
-     * Per-model totals are cumulative (newest snapshot wins), so a window's usage is "now minus the snapshot at the
-     * window boundary". A baseline is only trusted when its newest snapshot sits within [toleranceSeconds] of the
-     * boundary; otherwise the column is unknown (null), never guessed.
+     * Per-model totals are cumulative, so a window's usage is "newest snapshot minus the snapshot the window starts at".
+     * [before] is the newest snapshot at or before the boundary (analytics with `to = boundary`); it is used when it sits
+     * within [toleranceSeconds] of the boundary. Otherwise the earliest upload inside the window ([history], any order)
+     * is used and marked inexact, so the page can say "since HH:mm" instead of pretending to cover the whole window.
+     * A start that is the newest upload itself measures nothing: null (—), never 0.
      */
-    fun baseline(data: AnalyticsData?, provider: String, boundary: Long, toleranceSeconds: Long): Map<String, Double>? {
+    fun windowStart(
+        boundary: Long,
+        before: ModelSnap?,
+        history: List<TokenItem>,
+        latestAt: Long?,
+        toleranceSeconds: Long,
+        full: Boolean = true,
+    ): WindowStart? {
+        if (before != null && before.models.isNotEmpty() && before.full == full && before.at <= boundary && boundary - before.at <= toleranceSeconds) {
+            return WindowStart(before, true)
+        }
+        val first = history
+            .filter { it.observedAt >= boundary && it.models.isNotEmpty() && complete(it.models, it.totalTokens) == full }
+            .minByOrNull { it.observedAt } ?: return null
+        if (latestAt != null && first.observedAt >= latestAt) return null
+        return WindowStart(ModelSnap(first.observedAt, first.models.associate { it.model to it.tokens }, full), false)
+    }
+
+    /** True when per-model totals account for (≥90% of) the provider total; see [ModelSnap.full]. */
+    fun complete(models: List<ModelUsage>, totalTokens: Double): Boolean =
+        totalTokens <= 0.0 || models.sumOf { it.tokens } >= totalTokens * 0.9
+
+    /** Newest snapshot with models at or before an analytics range's `to`, as the server reports it. */
+    fun snapAt(data: AnalyticsData?, provider: String): ModelSnap? {
         val item = data?.provider(provider) ?: return null
         val latest = item.latest ?: return null
-        if (boundary - latest.observedAt > toleranceSeconds || item.models.isEmpty()) return null
-        return item.models.associate { it.model to it.tokens }
+        if (item.models.isEmpty()) return null
+        return ModelSnap(latest.observedAt, item.models.associate { it.model to it.tokens }, complete(item.models, latest.totalTokens))
     }
 
     fun modelRows(
@@ -184,6 +231,34 @@ object ConsoleRules {
             .map { (model, today, week) ->
                 ModelRow(model, today, week, week?.let { if (weekTotal > 0) it / weekTotal * 100.0 else 0.0 })
             }
+    }
+
+    fun modelTable(current: List<ModelUsage>, week: WindowStart?, today: WindowStart?, query: String = ""): ModelTable =
+        ModelTable(modelRows(current, week?.snap?.models, today?.snap?.models, query), today, week)
+
+    /**
+     * Honest coverage note for a models table: `今日自 08:12 · 7天自 10/24 15:00` for inexact starts, `今日无快照` when a
+     * column cannot be computed, nothing when both columns cover their full window.
+     */
+    fun coverageNote(table: ModelTable, zone: java.time.ZoneId): String? {
+        fun part(label: String, start: WindowStart?, pattern: String): String? = when {
+            start == null -> "${label}无可比快照"
+            start.exact -> null
+            else -> label + "自 " + java.time.Instant.ofEpochSecond(start.snap.at).atZone(zone).format(java.time.format.DateTimeFormatter.ofPattern(pattern))
+        }
+        val parts = listOfNotNull(part("今日", table.today, "HH:mm"), part("7天", table.week, "MM/dd HH:mm"))
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    /**
+     * Daily analytics points are keyed by the collector's calendar date at 00:00 UTC. Asking for a range that starts on
+     * a UTC midnight and ends at the last day's 23:59:59 UTC gives every date its own bucket, today included; a range
+     * starting at "now − 6 days" splits dates across buckets and drops today's point.
+     */
+    fun dayRange(days: Int, nowMillis: Long, zone: java.time.ZoneId): Pair<Long, Long> {
+        val today = java.time.Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+        val from = today.minusDays((days - 1).toLong()).atStartOfDay(java.time.ZoneOffset.UTC).toEpochSecond()
+        return from to from + days * DAY - 1
     }
 
     /** Day slots `from + k·DAY` for k in 0 until days, each with its point if the server sent one. */

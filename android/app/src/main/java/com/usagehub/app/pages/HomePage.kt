@@ -23,8 +23,11 @@ enum class ValueTone(val color: Int, val glow: Int) {
     WHITE(0xFFF1F4FA.toInt(), 0),
 }
 
-/** A label + value pair whose value shrinks to fit, then falls back to a compact form. */
-class Stat(val label: String, val value: String, val tone: ValueTone = ValueTone.WHITE, val fallback: String? = null)
+/**
+ * A label + value pair whose value shrinks to fit, then falls back to a compact form. [note] is a small dim remark
+ * drawn right after the value (e.g. 无价格 next to —) so an empty value explains itself.
+ */
+class Stat(val label: String, val value: String, val tone: ValueTone = ValueTone.WHITE, val fallback: String? = null, val note: String? = null)
 
 object StatRow {
     class Fitted(val widths: List<Float>, val size: Float, val texts: List<String>)
@@ -37,7 +40,8 @@ object StatRow {
     fun fit(g: Gfx, stats: List<Stat>, width: Float, gap: Float, max: Float, min: Float, labelSize: Float, pad: Float): Fitted {
         val free = width - gap * (stats.size - 1)
         val mins = stats.map { g.width(it.label, labelSize) + pad }
-        fun need(texts: List<String>, size: Float) = texts.mapIndexed { i, t -> maxOf(mins[i], g.width(t, size, 800, true) + pad) }
+        val notes = stats.map { stat -> stat.note?.let { g.width(it, NOTE_SIZE) + NOTE_GAP } ?: 0f }
+        fun need(texts: List<String>, size: Float) = texts.mapIndexed { i, t -> maxOf(mins[i], g.width(t, size, 800, true) + notes[i] + pad) }
         var texts = stats.map { it.value }
         var size = max
         while (size > min && need(texts, size).sum() > free) size -= 0.5f
@@ -51,9 +55,23 @@ object StatRow {
         return Fitted(wants.map { it / total * free }, size, texts)
     }
 
+    const val NOTE_SIZE = 9.5f
+    const val NOTE_GAP = 4f
+
     fun text(g: Gfx, stat: Stat, text: String, x: Float, y: Float, size: Float, align: Paint.Align = Paint.Align.LEFT) {
         g.text(text, x, y, size, stat.tone.color, 800, align, tnum = true, glow = stat.tone.glow, glowRadius = 6f, spacing = -0.01f)
+        if (align == Paint.Align.LEFT) note(g, stat, text, x, y, size)
     }
+
+    /** The stat's [Stat.note] right after a left-aligned value drawn at ([x], [y]). */
+    fun note(g: Gfx, stat: Stat, text: String, x: Float, y: Float, size: Float) {
+        val note = stat.note ?: return
+        g.text(note, x + g.width(text, size, 800, true) + NOTE_GAP, y, NOTE_SIZE, Palette.DIM, 400)
+    }
+
+    /** 今日费用 / 累计费用 tile: — plus 无价格 when tokens are non-zero but the cost is 0 (no price for the model). */
+    fun cost(label: String, cost: Double?, tokens: Long?, tone: ValueTone = ValueTone.WHITE): Stat =
+        Stat(label, Fmt.cost(cost, tokens), tone, note = if (Fmt.unpriced(cost, tokens)) Fmt.NO_PRICE else null)
 }
 
 object HomePage {
@@ -125,8 +143,8 @@ object HomePage {
         val week = UsageLogic.quotaWindow(provider, 10_080)
         val qx = c.left + 133f
         val qr = c.right - 14f
-        quota(g, "5 小时用量", five?.usedPercent, qx, qr, c.top + 72f, accent)
-        quota(g, "7 天用量", week?.usedPercent, qx, qr, c.top + 122f, accent)
+        quota(g, "5 小时用量", five?.usedPercent, qx, qr, c.top + 72f, accent, missing = windowMissing(name, 300))
+        quota(g, "7 天用量", week?.usedPercent, qx, qr, c.top + 122f, accent, missing = windowMissing(name, 10_080))
         val left = if (week?.resetsAtEpochSeconds != null) "还剩 ${Fmt.remain(week.resetsAtEpochSeconds, now)}" else "重置时间未知"
         g.textMid(left, qr, c.top + 168f, 12.5f, Palette.SOFT, 400, Paint.Align.RIGHT)
 
@@ -135,8 +153,8 @@ object HomePage {
         val stats = listOf(
             Stat("今日 Token", Fmt.full(usage?.todayTokens), tone[0], Fmt.compact(usage?.todayTokens)),
             Stat("累计 Token", Fmt.compact(usage?.totalTokens), tone[1]),
-            Stat("今日费用", Fmt.money(usage?.todayCostUsd), tone[2]),
-            Stat("累计费用", Fmt.money(usage?.totalCostUsd), tone[3]),
+            StatRow.cost("今日费用", usage?.todayCostUsd, usage?.todayTokens, tone[2]),
+            StatRow.cost("累计费用", usage?.totalCostUsd, usage?.totalTokens, tone[3]),
         )
         val top = c.bottom - 69f
         val inner = c.width() - 22f
@@ -151,9 +169,22 @@ object HomePage {
         }
     }
 
-    private fun quota(g: Gfx, label: String, value: Double?, x: Float, right: Float, top: Float, accent: Accent) {
+    /**
+     * Shown instead of an empty bar + `--` when the vendor sends no value for a window. Codex's app-server only has the
+     * weekly bucket, so its 5-hour window is "not provided"; anything else is "not returned" this time.
+     */
+    fun windowMissing(name: String, minutes: Int): String {
+        val label = if (minutes == 300) "5 小时窗口" else "7 天窗口"
+        return if (name == "codex" && minutes == 300) "官方未提供 $label" else "官方未返回 $label"
+    }
+
+    private fun quota(g: Gfx, label: String, value: Double?, x: Float, right: Float, top: Float, accent: Accent, missing: String? = null) {
         g.textMid(label, x, top, 12.5f, Palette.SOFT, 400)
         val cy = top + 19f
+        if (value == null && missing != null) {
+            g.textMid(g.ellipsize(missing, right - x, 11.5f), x, cy, 11.5f, Palette.DIM, 400)
+            return
+        }
         Widgets.meter(g, RectF(x, cy - 4f, right - 50f, cy + 4f), value, accent)
         g.textMid(Fmt.pct(value), right, cy, 15.5f, 0xFFFFFFFF.toInt(), 800, Paint.Align.RIGHT, tnum = true)
     }

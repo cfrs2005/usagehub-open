@@ -41,7 +41,7 @@ USAGEHUB_CODEX_USAGE_JSON=/absolute/path/codex-usage.json
 
 The configured JSON files are optional. Without them, the local-history collector calls the relevant `ccusage` command directly. The code never assumes a machine-specific source path.
 
-Claude pricing is refreshed by `ccusage` instead of forcing its bundled offline catalog. Use `ccusage` 20 or newer: the collector requests its per-agent report and imports only the Claude row. If a new Claude model has tokens but no price coverage, the collector rejects the zero-cost result and retains the last valid snapshot.
+Claude pricing is refreshed by `ccusage` instead of forcing its bundled offline catalog. Use `ccusage` 20 or newer: the collector requests its per-agent report and imports only the Claude row. Codex history uses `ccusage-codex` with its online price table and falls back to `--offline` only when the online read fails. For both providers, if any day (or today / the total) has tokens but zero cost — a model the price table does not cover yet — the collector rejects the result and retains the last valid snapshot; it never uploads $0 for non-zero usage.
 
 ## Schedule settings file
 

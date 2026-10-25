@@ -142,16 +142,108 @@ class ConsoleLogicTest {
         assertEquals(listOf("new"), ConsoleRules.modelRows(current, week, null, "NE").map { it.model })
     }
 
+    private fun upload(at: Long, total: Double, vararg models: Pair<String, Double>) =
+        TokenItem("claude", at, 0.0, total, 0.0, 0.0, models.map { ModelUsage(it.first, it.second, 0.0) })
+
     @Test
-    fun baselineIsOnlyTrustedNearTheBoundary() {
-        val boundary = 1_000_000L
-        fun data(observedAt: Long) = AnalyticsData(
-            0, boundary, "day",
-            listOf(AnalyticsProvider("claude", emptyList(), listOf(ModelUsage("a", 5.0, 0.0)), LatestTotals(0.0, 0.0, observedAt))),
+    fun sparseUploadsStillGiveHonestDeltasInsteadOfDashes() {
+        // v0.1.8 field shape: no upload within 1 h before midnight, model totals only since yesterday 06:00.
+        val midnight = Instant.parse("2026-10-24T16:00:00Z").epochSecond // 10/25 00:00 Asia/Shanghai
+        val weekBoundary = midnight - 6 * 86_400
+        val now = midnight + 13 * 3_600
+        val history = listOf(
+            upload(now - 60, 1_000.0, "opus" to 700.0, "fable" to 300.0),
+            upload(midnight + 9 * 3_600, 900.0, "opus" to 620.0, "fable" to 280.0),
+            upload(midnight - 18 * 3_600, 400.0, "opus" to 300.0, "fable" to 100.0),
+            upload(midnight - 20 * 3_600, 380.0), // before model_usage existed
         )
-        assertEquals(mapOf("a" to 5.0), ConsoleRules.baseline(data(boundary - 3_000), "claude", boundary, 3_600))
-        assertNull(ConsoleRules.baseline(data(boundary - 4_000), "claude", boundary, 3_600))
-        assertNull(ConsoleRules.baseline(data(boundary), "codex", boundary, 3_600))
+        val beforeMidnight = ModelSnap(midnight - 2 * 3_600, mapOf("opus" to 610.0, "fable" to 270.0))
+        val current = listOf(ModelUsage("opus", 700.0, 0.0), ModelUsage("fable", 300.0, 0.0))
+
+        val today = ConsoleRules.windowStart(midnight, beforeMidnight, history, now - 60, 3_600)!!
+        val week = ConsoleRules.windowStart(weekBoundary, null, history, now - 60, 12 * 3_600)!!
+        assertEquals(false, today.exact)
+        assertEquals(midnight + 9 * 3_600, today.snap.at)
+        assertEquals(midnight - 18 * 3_600, week.snap.at)
+
+        val table = ConsoleRules.modelTable(current, week, today)
+        assertEquals(listOf(80.0, 20.0), table.rows.map { it.today })
+        assertEquals(listOf(400.0, 200.0), table.rows.map { it.week })
+        val shanghai = ZoneId.of("Asia/Shanghai")
+        assertEquals("今日自 09:00 · 7天自 10/24 06:00", ConsoleRules.coverageNote(table, shanghai))
+    }
+
+    @Test
+    fun aSnapshotAtTheBoundaryIsExactAndNeedsNoNote() {
+        val boundary = 1_000_000L
+        val before = ModelSnap(boundary - 3_000, mapOf("a" to 5.0))
+        val exact = ConsoleRules.windowStart(boundary, before, emptyList(), boundary + 100, 3_600)!!
+        assertEquals(true, exact.exact)
+        // Too far before the boundary, and nothing after it: unknown, not a guess that spans the previous day.
+        assertNull(ConsoleRules.windowStart(boundary, before.copy(at = boundary - 4_000), emptyList(), boundary + 100, 3_600))
+        val table = ConsoleRules.modelTable(listOf(ModelUsage("a", 9.0, 0.0)), exact, exact)
+        assertNull(ConsoleRules.coverageNote(table, utc))
+        assertEquals(listOf(4.0), table.rows.map { it.week })
+        assertEquals("今日无可比快照 · 7天无可比快照", ConsoleRules.coverageNote(ConsoleRules.modelTable(emptyList(), null, null), utc))
+    }
+
+    @Test
+    fun theNewestUploadAloneMeasuresNothing() {
+        val boundary = 1_000_000L
+        val only = upload(boundary + 500, 10.0, "a" to 10.0)
+        assertNull(ConsoleRules.windowStart(boundary, null, listOf(only), boundary + 500, 3_600))
+    }
+
+    @Test
+    fun partialModelTotalsAreNeverSubtractedFromFullOnes() {
+        // Pre-v0.1.9 Claude snapshots counted input+output only (~1% of the provider total).
+        val boundary = 1_000_000L
+        val history = listOf(
+            upload(boundary + 100, 17_000.0, "opus" to 120.0),
+            upload(boundary + 900, 17_100.0, "opus" to 17_100.0),
+            upload(boundary + 1_800, 17_200.0, "opus" to 17_200.0),
+        )
+        val start = ConsoleRules.windowStart(boundary, ModelSnap(boundary - 10, mapOf("opus" to 110.0), full = false), history, boundary + 1_800, 3_600)!!
+        assertEquals(boundary + 900, start.snap.at)
+        assertEquals(false, start.exact)
+        assertTrue(ConsoleRules.complete(listOf(ModelUsage("a", 95.0, 0.0)), 100.0))
+        assertEquals(false, ConsoleRules.complete(listOf(ModelUsage("a", 1.0, 0.0)), 100.0))
+    }
+
+    @Test
+    fun historyParsesModelUsage() {
+        val raw = """{"items":[],"tokenItems":[{"provider":"codex","observedAt":5,"todayTokens":1,"totalTokens":2,"todayCostUsd":0,"totalCostUsd":3,
+            "modelUsage":[{"model":"gpt-6-astra","tokens":499450672,"costUsd":0},{"model":"","tokens":1,"costUsd":0}]}]}"""
+        val item = AnalyticsJson.parseHistory(raw).tokenItems.single()
+        assertEquals(listOf(ModelUsage("gpt-6-astra", 499_450_672.0, 0.0)), item.models)
+        assertTrue(AnalyticsJson.parseHistory("""{"tokenItems":[{"provider":"codex","observedAt":5}]}""").tokenItems.single().models.isEmpty())
+    }
+
+    @Test
+    fun dayRangeStartsOnUtcMidnightSoTodayGetsItsOwnBucket() {
+        val shanghai = ZoneId.of("Asia/Shanghai")
+        val now = Instant.parse("2026-10-25T04:50:00Z").toEpochMilli() // 10/25 12:50 in Shanghai
+        val (from, to) = ConsoleRules.dayRange(7, now, shanghai)
+        assertEquals(Instant.parse("2026-10-19T00:00:00Z").epochSecond, from)
+        assertEquals(Instant.parse("2026-10-25T23:59:59Z").epochSecond, to)
+        assertEquals("10/19/2026 - 10/25/2026", Fmt.range(7, null, now, shanghai))
+    }
+
+    @Test
+    fun zeroCostWithTokensIsUnpricedNotFree() {
+        assertEquals(Fmt.NONE, Fmt.cost(0.0, 15_453_948L))
+        assertEquals("$0.00", Fmt.cost(0.0, 0L))
+        assertEquals("$3.10", Fmt.cost(3.095408, 15_453_948L))
+        assertEquals(Fmt.NONE, Fmt.cost(null, 5L))
+        assertTrue(Fmt.unpriced(0.0, 1.0))
+        assertEquals(false, Fmt.unpriced(0.0, 0.0))
+    }
+
+    @Test
+    fun recordTokenColumnsStayCompactAtRealMagnitudes() {
+        assertEquals("307.86M", Fmt.compact(307_861_178.0))
+        assertEquals("17.66B", Fmt.compact(17_661_187_881.0))
+        assertEquals("123.46B", Fmt.compact(123_456_789_012.0))
     }
 
     @Test
