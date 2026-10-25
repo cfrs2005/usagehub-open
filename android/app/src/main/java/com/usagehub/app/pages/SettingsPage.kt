@@ -102,7 +102,7 @@ object SettingsPage {
     private fun source(provider: ProviderUsage?): String {
         provider ?: return Fmt.NONE
         val quota = when (provider.source) {
-            "official_statusline" -> "官方 statusLine"
+            "official_statusline" -> "官方 claude -p /usage"
             "official_app_server" -> "官方 app-server"
             else -> provider.source
         }
@@ -219,7 +219,7 @@ object SettingsPage {
         rows.row("版本", "UsageHub ${s.versionName}" + if (s.mock) " · 演示数据" else "")
         val d = s.diagnostics
         rows.row("设备", d?.let { "${it.widthPixels}×${it.heightPixels} px · ${it.densityDpi} dpi · ${it.networkLabel}" } ?: Fmt.NONE)
-        rows.row("数据来源", "额度：Claude 官方 statusLine / Codex 官方 app-server；Token：ccusage")
+        rows.row("数据来源", "额度：Claude 官方 /usage（claude -p）/ Codex 官方 app-server；Token：ccusage")
         rows.row("费用口径", "费用为 API 等价估算，非账单金额")
     }
 

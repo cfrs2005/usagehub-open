@@ -226,12 +226,24 @@ object ConsoleRules {
             )
         }
         val weekTotal = deltas.sumOf { it.third ?: 0.0 }
+        val cumulative = current.associate { it.model to it.tokens }
         return deltas
             .filter { query.isBlank() || it.first.contains(query.trim(), ignoreCase = true) }
             .map { (model, today, week) ->
                 ModelRow(model, today, week, week?.let { if (weekTotal > 0) it / weekTotal * 100.0 else 0.0 })
             }
+            .sortedWith(byUsage(cumulative))
     }
+
+    /**
+     * Heaviest first, so the models page truncates the long tail rather than the models actually in use:
+     * 7-day delta ↓, then today ↓, then cumulative tokens ↓, then name ↑. Unknown (null) sorts as the smallest.
+     */
+    private fun byUsage(cumulative: Map<String, Double>): Comparator<ModelRow> =
+        compareByDescending<ModelRow> { it.week ?: Double.NEGATIVE_INFINITY }
+            .thenByDescending { it.today ?: Double.NEGATIVE_INFINITY }
+            .thenByDescending { cumulative[it.model] ?: Double.NEGATIVE_INFINITY }
+            .thenBy { it.model }
 
     fun modelTable(current: List<ModelUsage>, week: WindowStart?, today: WindowStart?, query: String = ""): ModelTable =
         ModelTable(modelRows(current, week?.snap?.models, today?.snap?.models, query), today, week)

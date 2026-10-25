@@ -138,7 +138,10 @@ object MockFixture {
         return JSONObject().put("items", JSONArray()).put("nextCursor", JSONObject.NULL).put("tokenItems", items).toString()
     }
 
-    /** server.ts `/v1/analytics`: daily points keyed at the date's 00:00 UTC; models from the newest upload with models. */
+    /**
+     * server.ts `/v1/analytics`: daily points keyed at the date's 00:00 UTC; models from the newest upload with models.
+     * Models go out by name, not by usage, so the heaviest model is not first — the device must sort them itself.
+     */
     private fun analytics(from: Long, to: Long, now: Long): String {
         val providers = JSONArray()
         specs.forEach { spec ->
@@ -157,7 +160,7 @@ object MockFixture {
             val newest = uploads.firstOrNull()
             providers.put(
                 JSONObject().put("provider", spec.name).put("points", JSONArray(points.values.toList()))
-                    .put("models", models(uploads.firstOrNull { it.models.isNotEmpty() }?.models.orEmpty().sortedByDescending { it.second }))
+                    .put("models", models(uploads.firstOrNull { it.models.isNotEmpty() }?.models.orEmpty().sortedBy { it.first }))
                     .put("latest", newest?.let { JSONObject().put("totalTokens", it.total).put("totalCostUsd", round(it.totalCost)).put("observedAt", it.at) } ?: JSONObject.NULL),
             )
         }

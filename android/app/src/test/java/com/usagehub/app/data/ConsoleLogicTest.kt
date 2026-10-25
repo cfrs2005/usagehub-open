@@ -134,12 +134,48 @@ class ConsoleLogicTest {
         val current = listOf(ModelUsage("a", 1_000.0, 0.0), ModelUsage("b", 500.0, 0.0), ModelUsage("new", 100.0, 0.0))
         val week = mapOf("a" to 400.0, "b" to 500.0)
         val rows = ConsoleRules.modelRows(current, week, null)
-        assertEquals(listOf(600.0, 0.0, 100.0), rows.map { it.week })
+        // Sorted by 7-day usage, heaviest first.
+        assertEquals(listOf("a", "new", "b"), rows.map { it.model })
+        assertEquals(listOf(600.0, 100.0, 0.0), rows.map { it.week })
         assertEquals(600.0 / 700.0 * 100, rows[0].share!!, 1e-9)
         assertTrue(rows.all { it.today == null })
         val unknown = ConsoleRules.modelRows(current, null, null)
         assertTrue(unknown.all { it.week == null && it.share == null })
         assertEquals(listOf("new"), ConsoleRules.modelRows(current, week, null, "NE").map { it.model })
+    }
+
+    @Test
+    fun modelRowsPutTheHeaviestModelsFirstSoTruncationHidesTheLongTail() {
+        // Server order is alphabetical-ish; the heavy model is last.
+        val current = listOf(
+            ModelUsage("haiku", 50.0, 0.0),
+            ModelUsage("sonnet", 900.0, 0.0),
+            ModelUsage("opus", 5_000.0, 0.0),
+        )
+        val week = mapOf("haiku" to 40.0, "sonnet" to 800.0, "opus" to 1_000.0)
+        val today = mapOf("haiku" to 45.0, "sonnet" to 850.0, "opus" to 4_000.0)
+        assertEquals(listOf("opus", "sonnet", "haiku"), ConsoleRules.modelRows(current, week, today).map { it.model })
+        // Same 7-day delta: today breaks the tie.
+        val tieWeek = mapOf("haiku" to 0.0, "sonnet" to 0.0, "opus" to 0.0)
+        val tieCurrent = listOf(ModelUsage("x", 100.0, 0.0), ModelUsage("y", 100.0, 0.0))
+        assertEquals(
+            listOf("y", "x"),
+            ConsoleRules.modelRows(tieCurrent, mapOf("x" to 0.0, "y" to 0.0), mapOf("x" to 90.0, "y" to 10.0)).map { it.model },
+        )
+        assertEquals(listOf("opus", "sonnet", "haiku"), ConsoleRules.modelRows(current, tieWeek, null).map { it.model })
+    }
+
+    @Test
+    fun modelRowsWithoutAWeekSnapshotFallBackToCumulativeTokensThenName() {
+        val current = listOf(
+            ModelUsage("small", 10.0, 0.0),
+            ModelUsage("big", 1_000.0, 0.0),
+            ModelUsage("beta", 500.0, 0.0),
+            ModelUsage("alpha", 500.0, 0.0),
+        )
+        val rows = ConsoleRules.modelRows(current, null, null)
+        assertTrue(rows.all { it.week == null && it.today == null })
+        assertEquals(listOf("big", "alpha", "beta", "small"), rows.map { it.model })
     }
 
     private fun upload(at: Long, total: Double, vararg models: Pair<String, Double>) =
